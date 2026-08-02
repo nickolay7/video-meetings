@@ -1,0 +1,29 @@
+# Зависимости
+node_modules
+
+# Сборка
+dist
+build
+.next
+out
+
+# Окружение
+.env
+.env.local
+.env*.local
+
+# Типизация
+*.tsbuildinfo
+next-env.d.ts
+
+# Журналы и кэш
+*.log
+npm-debug.log*
+.eslintcache
+.tsbuildinfo
+
+# Редакторы и ОС
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json

@@ -1,0 +1,8 @@
+# Игнорируемые пути для Prettier
+node_modules
+dist
+build
+.next
+coverage
+*.tsbuildinfo
+package-lock.json
