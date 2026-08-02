@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const {execSync}=require('child_process'); let raw=''; process.stdin.on('data', c => raw += c); process.stdin.on('end', () => { let j; try { j = JSON.parse(raw); } catch(e) { process.exit(0); } const f = (j.tool_response && j.tool_response.filePath) || (j.tool_input && j.tool_input.file_path) || ''; if (!f) process.exit(0); const skip = ['node_modules','.next','dist','build','coverage']; if (skip.some(s => f.includes('/' + s + '/'))) process.exit(0); const ok = /\\.(ts|tsx|js|jsx|mjs|cjs|json|md|css|scss|html|yaml|yml)$/; if (!ok.test(f)) process.exit(0); try { execSync('npx --yes prettier --write --ignore-unknown ' + JSON.stringify(f), {stdio: 'inherit'}); } catch(e) {} if (/\\.(ts|tsx)$/.test(f)) { try { execSync('npx --yes eslint --fix ' + JSON.stringify(f), {stdio: 'inherit'}); } catch(e) {} } });\"",
+            "timeout": 60,
+            "statusMessage": "Formatting changed file..."
+          }
+        ]
+      }
+    ]
+  }
+}
