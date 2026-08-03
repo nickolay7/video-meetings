@@ -17,6 +17,10 @@ export class UsersRepository {
     return this.users.get(email);
   }
 
+  async findById(id: string): Promise<User | undefined> {
+    return [...this.users.values()].find((user) => user.id === id);
+  }
+
   async clear(): Promise<void> {
     this.users.clear();
     this.idCounter = 1;

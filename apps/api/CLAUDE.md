@@ -23,8 +23,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Модули
 
-- `src/auth/` — регистрация/логин через CQRS (`CommandBus`), JWT (`@nestjs/jwt`). Плюс `jwt-auth.guard.ts`: `JwtAuthGuard` (CanActivate) — валидирует Bearer-токен через `JwtService`, кладёт `userId` в request; на него опирается `@UseGuards(JwtAuthGuard)` в защищённых контроллерах.
-- `src/users/` — in-memory репозиторий `UsersRepository` (Map + счётчик id), сущность `User`. Используется auth; e2e чистит через `clear()`.
+- `src/auth/` — регистрация/логин через CQRS (`CommandBus`), JWT (`@nestjs/jwt`). С модулем `Users` взаимодействует только через CQRS: хендлеры `RegisterCommand`/`LoginCommand` инжектят `QueryBus`/`CommandBus` и выполняют `FindUserByEmailQuery` и `CreateUserCommand` (без прямого доступа к `UsersRepository`). Плюс `jwt-auth.guard.ts`: `JwtAuthGuard` (CanActivate) — валидирует Bearer-токен через `JwtService`, кладёт `userId` в request; на него опирается `@UseGuards(JwtAuthGuard)` в защищённых контроллерах.
+- `src/users/` — модуль пользователей с CQRS-фасадом для межмодульного взаимодействия:
+  - `commands/create-user.command.ts` + handler — создание пользователя;
+  - `queries/find-user-by-email.query.ts` + handler — поиск по e-mail;
+  - `queries/find-user-by-id.query.ts` + handler — поиск по id (для будущего «профиля»);
+  - `users.repository.ts` — in-memory (Map по e-mail + счётчик id), сущность `User`; e2e чистит через `clear()`.
+  - Хендлеры регистрируются в общем `CommandBus`/`QueryBus` (модуль импортирует `CqrsModule`), поэтому Auth выполняет команды/запросы Users без прямой зависимости от репозитория.
 - `src/meetings/` — базовый CRUD без бизнес-логики:
   - `MeetingsController` — `POST /meetings`, `GET /meetings`, `GET /meetings/:id` (404 при ненайденной встрече), весь контроллер под `@UseGuards(JwtAuthGuard)` → без токена 401.
   - `meetings.repository.ts` — in-memory (по образцу UsersRepository), `clear()`;
