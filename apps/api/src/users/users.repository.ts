@@ -1,0 +1,24 @@
+import { Injectable } from '@nestjs/common';
+import { User } from './user.entity';
+
+@Injectable()
+export class UsersRepository {
+  private users: Map<string, User> = new Map();
+  private idCounter = 1;
+
+  async create(email: string, hashedPassword: string): Promise<User> {
+    const id = String(this.idCounter++);
+    const user = new User(id, email, hashedPassword);
+    this.users.set(email, user);
+    return user;
+  }
+
+  async findByEmail(email: string): Promise<User | undefined> {
+    return this.users.get(email);
+  }
+
+  async clear(): Promise<void> {
+    this.users.clear();
+    this.idCounter = 1;
+  }
+}
