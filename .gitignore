@@ -22,6 +22,9 @@ npm-debug.log*
 .eslintcache
 .tsbuildinfo
 
+# Инструменты тестирования
+.playwright-mcp
+
 # Редакторы и ОС
 .DS_Store
 .idea
