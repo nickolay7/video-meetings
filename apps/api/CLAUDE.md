@@ -48,4 +48,5 @@ Nest компилирует TypeScript (`commonjs`, декораторы) чер
 
 - `npm run dev:api` — dev с watch-режимом (порт 3001)
 - `npm run build:api` — сборка в `dist/`
+- `npm test` (алиас `npm run test:e2e`) — e2e-тесты (супертест, in-memory репозитории, БД не нужна)
 - Запуск собранного билда: `npm start --workspace @video-meetings/api` (или `node apps/api/dist/main`)

@@ -21,9 +21,12 @@ NPM-монорепозиторий (npm workspaces) платформы виде�
 - `npm run build:web` / `build:api` — сборка отдельного приложения
 - `npm run lint` / `lint:fix` — ESLint всего монорепо (flat config)
 - `npm run format` / `format:check` — Prettier (`--write .` / проверка)
+- `npm test` — запустить тесты всех воркспейсов (сейчас e2e-набор API)
 - `npm run clean` — удалить `node_modules`, `.next`, `dist`
 
-Тестов / скриптов тестирования на этапе инициализации нет.
+## Git-хуки
+
+Настроен Husky: при коммите запускается `pre-commit` — `lint-staged` (линт и формат только staged-файлов) и `npm test`. Хуки ставятся автоматически через скрипт `prepare` при `npm install`.
 
 ## Окружение
 

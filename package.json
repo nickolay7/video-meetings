@@ -17,7 +17,16 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "clean": "rm -rf node_modules apps/*/node_modules apps/*/.next apps/*/dist"
+    "clean": "rm -rf node_modules apps/*/node_modules apps/*/.next apps/*/dist",
+    "prepare": "husky",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{js,json,css,md}": "prettier --write"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
@@ -25,6 +34,8 @@
     "eslint": "^9.13.0",
     "eslint-config-prettier": "^9.1.0",
     "globals": "^15.11.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.3.0",
     "prettier": "^3.3.3",
     "prettier-plugin-tailwindcss": "^0.6.8",
     "typescript": "^5.6.3",
