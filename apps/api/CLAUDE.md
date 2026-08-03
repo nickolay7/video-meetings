@@ -21,7 +21,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `src/app.controller.ts` — контроллер `@Controller()` с эндпоинтом `GET /`.
 - `src/app.service.ts` — сервис, возвращает `{ status: 'ok', uptime }`.
 
-При добавлении нового модуля/контроллера держать инъекцию через стандартный NestDI (`constructor(private readonly service: XService)`), фичи объявлять в `AppModule`/или в подмодуле.
+## Модули
+
+- `src/auth/` — регистрация/логин через CQRS (`CommandBus`), JWT (`@nestjs/jwt`). Плюс `jwt-auth.guard.ts`: `JwtAuthGuard` (CanActivate) — валидирует Bearer-токен через `JwtService`, кладёт `userId` в request; на него опирается `@UseGuards(JwtAuthGuard)` в защищённых контроллерах.
+- `src/users/` — in-memory репозиторий `UsersRepository` (Map + счётчик id), сущность `User`. Используется auth; e2e чистит через `clear()`.
+- `src/meetings/` — базовый CRUD без бизнес-логики:
+  - `MeetingsController` — `POST /meetings`, `GET /meetings`, `GET /meetings/:id` (404 при ненайденной встрече), весь контроллер под `@UseGuards(JwtAuthGuard)` → без токена 401.
+  - `meetings.repository.ts` — in-memory (по образцу UsersRepository), `clear()`;
+  - `meeting.entity.ts`, `dto/create-meeting.dto.ts` — валидация через class-validator (`name` обязателен, `description` опционален).
+  - `MeetingsModule` регистрирует свой `JwtModule` с тем же секретом (`process.env.JWT_SECRET ?? 'default-secret-key'`).
+
+При добавлении нового модуля/контроллера держать инъекцию через стандартный NestDI (`constructor(private readonly service: XService)`), фичи объявлять в `AppModule`/или в подмодуле. Защищённые эндпоинты — через `JwtAuthGuard`.
 
 ## Сборка
 
