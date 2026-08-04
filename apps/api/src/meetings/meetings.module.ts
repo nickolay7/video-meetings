@@ -12,5 +12,6 @@ import { MeetingsRepository } from './meetings.repository';
   ],
   controllers: [MeetingsController],
   providers: [JwtAuthGuard, MeetingsRepository],
+  exports: [MeetingsRepository],
 })
 export class MeetingsModule {}

@@ -25,6 +25,9 @@ npm-debug.log*
 # Инструменты тестирования
 .playwright-mcp
 
+# Загруженные файлы встреч
+apps/api/uploads
+
 # Редакторы и ОС
 .DS_Store
 .idea

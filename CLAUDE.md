@@ -45,6 +45,10 @@ eslint.config.mjs   # единый flat-конфиг ESLint
 
 Каждое приложение имеет собственный `CLAUDE.md` с деталями своей архитектуры.
 
+## Документация
+
+- [PRD: загрузка файлов встречи](./docs/meeting-file-upload.md) · [План](./docs/meeting-file-upload-plan.md) · [Ресерч реализации](./docs/research-meeting-file-upload.md)
+
 ## Соглашения
 
 - Пакеты именуются префиксом `@video-meetings/*`.
