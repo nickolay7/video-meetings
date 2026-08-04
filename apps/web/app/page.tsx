@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Avatar, Badge, Button, Card, Chip, Spinner } from '@heroui/react';
+import { FilesModal } from '../components/files/files-modal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -172,14 +173,17 @@ export default function HomePage() {
                   {meeting.description && (
                     <p className="text-muted-foreground mb-2 text-sm">{meeting.description}</p>
                   )}
-                  <Chip size="sm" variant="soft" color="accent">
-                    {new Date(meeting.createdAt).toLocaleDateString('ru-RU', {
-                      day: 'numeric',
-                      month: 'short',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </Chip>
+                  <div className="flex items-center justify-between gap-2">
+                    <Chip size="sm" variant="soft" color="accent">
+                      {new Date(meeting.createdAt).toLocaleDateString('ru-RU', {
+                        day: 'numeric',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </Chip>
+                    <FilesModal meetingId={meeting.id} meetingName={meeting.name} />
+                  </div>
                 </Card.Content>
               </Card>
             ))}
