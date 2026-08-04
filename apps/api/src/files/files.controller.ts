@@ -10,7 +10,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { FilesService, UploadedFileData } from './files.service';
+import { FilesService } from './files.service';
 import { MeetingFile } from './meeting-file.entity';
 import { MAX_FILE_SIZE } from './files.constants';
 
@@ -28,7 +28,7 @@ export class FilesController {
   )
   async upload(
     @Param('id') meetingId: string,
-    @UploadedFile() file?: UploadedFileData,
+    @UploadedFile() file?: Express.Multer.File,
   ): Promise<MeetingFile> {
     if (!file) {
       throw new BadRequestException('File is required');
