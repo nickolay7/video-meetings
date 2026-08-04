@@ -35,6 +35,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `meetings.repository.ts` — in-memory (по образцу UsersRepository), `clear()`;
   - `meeting.entity.ts`, `dto/create-meeting.dto.ts` — валидация через class-validator (`name` обязателен, `description` опционален).
   - `MeetingsModule` регистрирует свой `JwtModule` с тем же секретом (`process.env.JWT_SECRET ?? 'default-secret-key'`).
+- `src/files/` — загрузка файлов встречи:
+  - `FilesController` — `POST /meetings/:id/files` (multipart-поле `file`), весь контроллер под `@UseGuards(JwtAuthGuard)` → без токена 401.
+  - `FilesService` — проверяет существование встречи (404), лимит **20 МБ** (413), «санирует» имя файла (берёт только имя без путей) и пишет файл на диск в `apps/api/uploads/<meetingId>/<storedName>`.
+  - `meeting-file.entity.ts` — `MeetingFile` (id, meetingId, originalName, storedName, size, mimeType, uploadedAt).
+  - `files.repository.ts` — метаданные in-memory (по образцу MeetingsRepository), `clear()` для e2e.
+  - `files.constants.ts` — `MAX_FILE_SIZE` и `getUploadsDir()` (путь зависит от `__dirname`, корректно и в `src/`, и в `dist/`).
+  - Уникальные имена на диске: `storedName = <uuid>-<originalName>` — файлы с одинаковым именем не перезаписывают друг друга.
+  - `FilesModule` импортирует `MeetingsModule` (для проверки существования встречи).
+
+  **Поведение после перезапуска:** метаданные форм хранятся in-memory и сбрасываются вместе с репозиториями (как у встреч); файлы, ранее записанные на диск, остаются, но при перезапуске игнорируются как «осиротевшие» — API их не знает. Очистка диска при перезапуске не выполняется намеренно.
 
 При добавлении нового модуля/контроллера держать инъекцию через стандартный NestDI (`constructor(private readonly service: XService)`), фичи объявлять в `AppModule`/или в подмодуле. Защищённые эндпоинты — через `JwtAuthGuard`.
 
