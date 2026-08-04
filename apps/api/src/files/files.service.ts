@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, writeFile, readFile } from 'fs/promises';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { MeetingsRepository } from '../meetings/meetings.repository';
@@ -25,10 +25,7 @@ export class FilesService {
   ) {}
 
   async upload(meetingId: string, file: Express.Multer.File): Promise<MeetingFile> {
-    const meeting = await this.meetingsRepository.findById(meetingId);
-    if (!meeting) {
-      throw new NotFoundException(`Meeting with id ${meetingId} not found`);
-    }
+    await this.assertMeetingExists(meetingId);
 
     const originalName = sanitizeFileName(file.originalname);
     // Уникальный префикс гарантирует, что два файла с одинаковым именем не перезапишут друг друга.
@@ -45,5 +42,39 @@ export class FilesService {
       size: file.size,
       mimeType: file.mimetype,
     });
+  }
+
+  async list(meetingId: string): Promise<MeetingFile[]> {
+    await this.assertMeetingExists(meetingId);
+    return this.filesRepository.findByMeetingId(meetingId);
+  }
+
+  /** Возвращает файл и его содержимое с диска для скачивания. */
+  async download(
+    meetingId: string,
+    fileId: string,
+  ): Promise<{ file: MeetingFile; content: Buffer }> {
+    await this.assertMeetingExists(meetingId);
+    const file = await this.filesRepository.findById(fileId);
+    // Файл ищем в контексте встречи: чужой fileId для встречи тоже даёт 404.
+    if (!file || file.meetingId !== meetingId) {
+      throw new NotFoundException(`File with id ${fileId} not found`);
+    }
+
+    let content: Buffer;
+    try {
+      content = await readFile(path.join(getUploadsDir(), meetingId, file.storedName));
+    } catch {
+      // Метаданные остались, а файл на диске удалён/осиротел — считаем его отсутствующим.
+      throw new NotFoundException(`File with id ${fileId} not found`);
+    }
+    return { file, content };
+  }
+
+  private async assertMeetingExists(meetingId: string): Promise<void> {
+    const meeting = await this.meetingsRepository.findById(meetingId);
+    if (!meeting) {
+      throw new NotFoundException(`Meeting with id ${meetingId} not found`);
+    }
   }
 }

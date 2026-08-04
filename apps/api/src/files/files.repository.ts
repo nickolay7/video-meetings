@@ -27,6 +27,15 @@ export class FilesRepository {
     return file;
   }
 
+  async findById(id: string): Promise<MeetingFile | undefined> {
+    return this.files.get(id);
+  }
+
+  /** Файлы встречи в порядке загрузки (Map сохраняет порядок вставки). */
+  async findByMeetingId(meetingId: string): Promise<MeetingFile[]> {
+    return [...this.files.values()].filter((file) => file.meetingId === meetingId);
+  }
+
   async clear(): Promise<void> {
     this.files.clear();
     this.idCounter = 1;
