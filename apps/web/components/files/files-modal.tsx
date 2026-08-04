@@ -53,6 +53,7 @@ export function FilesModal({ meetingId, meetingName }: FilesModalProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [files, setFiles] = useState<MeetingFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,6 +79,7 @@ export function FilesModal({ meetingId, meetingName }: FilesModalProps) {
     }
 
     setIsLoading(true);
+    setLoadFailed(false);
     setError(null);
     try {
       const res = await fetch(`${API_URL}/meetings/${meetingId}/files`, {
@@ -90,6 +92,7 @@ export function FilesModal({ meetingId, meetingName }: FilesModalProps) {
       }
 
       if (!res.ok) {
+        setLoadFailed(true);
         setError('Не удалось загрузить список файлов. Попробуйте ещё раз.');
         return;
       }
@@ -97,6 +100,7 @@ export function FilesModal({ meetingId, meetingName }: FilesModalProps) {
       const data: MeetingFile[] = await res.json();
       setFiles(data);
     } catch {
+      setLoadFailed(true);
       setError('Ошибка подключения к серверу. Попробуйте ещё раз.');
     } finally {
       setIsLoading(false);
@@ -107,6 +111,12 @@ export function FilesModal({ meetingId, meetingName }: FilesModalProps) {
     const token = getToken();
     if (!token) {
       handleUnauthorized();
+      return;
+    }
+
+    // Мгновенная проверка размера на клиенте; серверное ограничение (413) остаётся источником истины.
+    if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      setError(`Файл слишком большой. Максимальный размер — ${MAX_FILE_SIZE_MB} МБ.`);
       return;
     }
 
@@ -183,7 +193,8 @@ export function FilesModal({ meetingId, meetingName }: FilesModalProps) {
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(url);
+      // Откладываем revoke, иначе браузер может не успеть инициировать загрузку.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch {
       setError('Ошибка подключения к серверу. Попробуйте ещё раз.');
     }
@@ -253,7 +264,7 @@ export function FilesModal({ meetingId, meetingName }: FilesModalProps) {
                       <Spinner size="sm" />
                       <span className="text-muted-foreground text-sm">Загружаем файл…</span>
                     </li>
-                  ) : files.length === 0 ? (
+                  ) : files.length === 0 && !loadFailed ? (
                     <li className="text-muted-foreground py-8 text-center text-sm">
                       В этой встрече пока нет файлов.
                     </li>
@@ -264,6 +275,7 @@ export function FilesModal({ meetingId, meetingName }: FilesModalProps) {
                           type="button"
                           className="hover:bg-default flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors"
                           title={`Скачать ${file.originalName}`}
+                          aria-label={`Скачать ${file.originalName}`}
                           onClick={() => void handleDownload(file)}
                         >
                           <FileIcon />
