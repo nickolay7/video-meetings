@@ -29,15 +29,18 @@ export class ProfileService {
       throw new BadRequestException('Only image files are allowed');
     }
 
+    // Сначала фиксируем метаданные, потом пишем файл: если запись на диск сорвётся,
+    // GET /profile/avatar отдаст 404 (кейс обрабатывается в getAvatar), а на диске
+    // не останется осиротевшего файла, о котором репозиторий не знает.
+    await this.commandBus.execute(
+      new UpdateUserAvatarCommand(userId, AVATAR_STORED_NAME, mimeType),
+    );
+
     const userDir = path.join(getAvatarsDir(), userId);
     await mkdir(userDir, { recursive: true });
     // Фиксированное имя: повторная загрузка заменяет прежний файл.
     await writeFile(path.join(userDir, AVATAR_STORED_NAME), file.buffer);
 
-    // Репозиторий мутирует найденную запись: existing уже содержит обновлённый avatarPath.
-    await this.commandBus.execute(
-      new UpdateUserAvatarCommand(userId, AVATAR_STORED_NAME, mimeType),
-    );
     return existing;
   }
 
