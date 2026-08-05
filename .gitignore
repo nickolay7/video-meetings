@@ -25,6 +25,9 @@ npm-debug.log*
 # Инструменты тестирования
 .playwright-mcp
 
+# Состояние ralph-цикла (счётчик итераций/фаз)
+.claude/ralph.iterations.json
+
 # Загруженные файлы встреч
 apps/api/uploads
 

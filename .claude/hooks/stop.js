@@ -1,6 +1,18 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 
+// Ненулевой код выхода вложенной сессии (например, достигнут --max-turns) —
+// нормальный конец итерации, а не повод ронять весь цикл
+const runClaude = (cmd) => {
+  try {
+    execSync(cmd, { stdio: 'inherit' });
+  } catch {
+    console.log(
+      '⚠️ Вложенная сессия завершилась с ненулевым кодом (вероятно, лимит ходов). Продолжаем.',
+    );
+  }
+};
+
 const config = JSON.parse(fs.readFileSync('.claude/ralph-config.json', 'utf8'));
 
 if (!config.active) process.exit(0);
@@ -46,18 +58,16 @@ if (issues.length > 0) {
     .replace('{milestone}', phase.milestone)
     .replace('{branch}', phase.branch);
 
-  execSync(`claude -p "${prompt}" --max-turns ${config.maxTurns}`, { stdio: 'inherit' });
+  runClaude(`fcc-claude -p "${prompt}" --max-turns ${config.maxTurns}`);
 } else {
   console.log(`✅ Фаза ${counter.phaseIndex + 1} завершена. Создаём PR...`);
-  execSync(
-    `claude -p "Создай PR из ветки ${phase.branch} в main с названием 'feat: ${phase.milestone}'." --model claude-opus-4-7 --max-turns 10`,
-    { stdio: 'inherit' },
+  runClaude(
+    `fcc-claude -p "Создай PR из ветки ${phase.branch} в main с названием 'feat: ${phase.milestone}'." --model claude-opus-4-7 --max-turns 10`,
   );
 
   console.log('🔍 Ревью Opus 4.7...');
-  execSync(
-    `claude -p "Найди последний открытый PR и проведи детальное code review. Проверь архитектуру, безопасность, производительность и соответствие PRD. Оставь комментарии в PR через gh cli." --model claude-opus-4-7 --max-turns ${config.maxTurns}`,
-    { stdio: 'inherit' },
+  runClaude(
+    `fcc-claude -p "Найди последний открытый PR и проведи детальное code review. Проверь архитектуру, безопасность, производительность и соответствие PRD. Оставь комментарии в PR через gh cli." --model claude-opus-4-7 --max-turns ${config.maxTurns}`,
   );
 
   counter.phaseIndex++;
@@ -75,5 +85,5 @@ if (issues.length > 0) {
     .replace('{milestone}', nextPhase.milestone)
     .replace('{branch}', nextPhase.branch);
 
-  execSync(`claude -p "${prompt}" --max-turns ${config.maxTurns}`, { stdio: 'inherit' });
+  runClaude(`fcc-claude -p "${prompt}" --max-turns ${config.maxTurns}`);
 }
