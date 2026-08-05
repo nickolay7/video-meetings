@@ -1,5 +1,26 @@
 {
+  "permissions": {
+    "allow": [
+      "Edit(*)",
+      "Write(*)",
+      "Bash(npm run test)",
+      "Bash(npm run test:e2e)",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(npx prisma *)"
+    ]
+  },
   "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/stop.js"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit",
@@ -13,15 +34,5 @@
         ]
       }
     ]
-  },
-  "Stop": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node .claude/hooks/stop.js"
-        }
-      ]
-    }
-  ]
+  }
 }
