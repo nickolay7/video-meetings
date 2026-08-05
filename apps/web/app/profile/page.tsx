@@ -60,6 +60,10 @@ export default function ProfilePage() {
           <div className="flex justify-center py-16">
             <Spinner size="lg" />
           </div>
+        ) : !isLoading && !profile ? (
+          <p className="text-muted-foreground py-16 text-center text-sm" role="alert">
+            Не удалось загрузить профиль. Попробуйте ещё раз.
+          </p>
         ) : profile ? (
           <Card>
             <Card.Header className="flex flex-col items-center gap-4 pb-4 text-center">

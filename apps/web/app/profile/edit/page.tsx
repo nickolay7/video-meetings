@@ -250,6 +250,10 @@ export default function ProfileEditPage() {
           <div className="flex justify-center py-16">
             <Spinner size="lg" />
           </div>
+        ) : !isLoading && !profile ? (
+          <p className="text-muted-foreground py-16 text-center text-sm" role="alert">
+            Не удалось загрузить профиль. Попробуйте ещё раз.
+          </p>
         ) : profile ? (
           <div className="flex flex-col gap-6">
             {/* Аватар */}

@@ -48,7 +48,8 @@ let profileCache: Profile | null = null;
 /** Профиль текущего пользователя с модульным кэшем (см. ресерч §6.2). */
 export function useProfile() {
   const [profile, setProfile] = useState<Profile | null>(profileCache);
-  const [isLoading, setIsLoading] = useState(false);
+  // Спиннер сразу, если кэша нет — иначе до первого запроса мелькает пустой экран.
+  const [isLoading, setIsLoading] = useState(profileCache === null);
 
   const refresh = useCallback(async (): Promise<Profile | null> => {
     const token = getAccessToken();
