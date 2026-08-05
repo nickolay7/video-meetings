@@ -23,6 +23,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `next.config.ts` — конфиг Next (`reactStrictMode: true`).
 - `next-env.d.ts` — генерируется Next, добавлен в ignore ESLint, руками не редактировать.
 
+## Профиль пользователя (страницы `/profile` и `/profile/edit`)
+
+- `app/profile/page.tsx` — просмотр профиля: аватар (из blob-объекта или инициалы), имя (fallback — email), email, переход на редактирование. Требует JWT — без токена редирект на `/login`.
+- `app/profile/edit/page.tsx` — редактирование: смена имени (`PATCH /profile`; пустое имя → при отображении email), загрузка аватара (`POST /profile/avatar`, multipart-поле `file`, лимит 5 МБ, клиентская проверка типа/размера + серверные magic-bytes), смена пароля (`POST /profile/password`; неверный старый → «Неверный текущий пароль», форма не сбрасывается).
+- `hooks/use-profile.ts` — общий доступ к профилю и аватару:
+  - `useProfile()` — профиль с **модульным кэшем** (профиль переживает клиентскую навигацию без повторного запроса; `refresh()` тянет `GET /profile`, `update()` — синхронно из ответа API). Никакого глобального стейт-менеджера.
+  - `useAvatar()` — object-URL аватара через `fetch`+`blob`+`URL.createObjectURL` (обычный `<img src={API_URL}/profile/avatar>` не отправил бы Authorization). 404 → null (инициалы); старый URL отменяется, при размонтировании — `revokeObjectURL`.
+  - Утилиты `displayName()` (имя или email), `getInitials()`, `getAccessToken()`, `ProfileUnauthorizedError` (401 → logout).
+- Обработка 401 на всех запросах профиля — logout (`localStorage.removeItem('access_token')` + `router.push('/login')`).
+- Форма регистрации (`app/register/page.tsx`) принимает необязательное «Имя»; при пустом поле регистрация проходит без имени.
+
 ## Полезные команды
 
 Из корня монорепо:
