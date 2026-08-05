@@ -48,8 +48,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   **Поведение после перезапуска:** метаданные форм хранятся in-memory и сбрасываются вместе с репозиториями (как у встреч); файлы, ранее записанные на диск, остаются, но при перезапуске игнорируются как «осиротевшие» — API их не знает. Очистка диска при перезапуске не выполняется намеренно.
 
 - `src/profile/` — профиль авторизованного пользователя:
-  - `ProfileController` — `GET /profile` (JWT) возвращает `{ id, email, name }` текущего пользователя через `FindUserByIdQuery`; `PATCH /profile` обновляет имя через `UpdateUserNameCommand` (имя тримится, пустое/whitespace-only имя очищается). Поле аватара добавится в фазе 2. Без токена 401, при отсутствии пользователя — 404.
-  - `profile.module.ts` — под `@UseGuards(JwtAuthGuard)`, регистрирует свой `JwtModule` с тем же секретом; пароль из ответа исключается (маппинг в контроллере).
+  - `ProfileController` — под `@UseGuards(JwtAuthGuard)` (без токена 401, при отсутствии пользователя — 404). Эндпоинты:
+    - `GET /profile` — возвращает `{ id, email, name }` текущего пользователя через `FindUserByIdQuery`;
+    - `PATCH /profile` — обновляет имя через `UpdateUserNameCommand` (имя тримится, пустое/whitespace-only имя очищается);
+    - `POST /profile/avatar` — multipart-поле `file` через `FileInterceptor` (memoryStorage, лимит 5 МБ → 413 автоматически). `ProfileService.saveAvatar` проверяет тип **по магическим байтам содержимого** (PNG/JPEG/GIF/WebP), а не по расширению/заголовку — не-изображение даёт 400; записывает файл на диск и выполняет `UpdateUserAvatarCommand`. Повторная загрузка перезаписывает прежний файл (фиксированное имя `avatar`);
+    - `GET /profile/avatar` — отдаёт аватар через `StreamableFile` с сохранённым `Content-Type`; 404, если аватар не загружен, пользователь не найден или файл на диске отсутствует (осиротел);
+    - `POST /profile/password` — смена пароля: `ChangePasswordDto` (`oldPassword`, `newPassword` ≥ 8 символов), старый проверяется через `bcrypt.compare` (неверный — 400 «Old password is incorrect»), новый хешируется (10 раундов) и сохраняется через `UpdateUserPasswordCommand`.
+  - `ProfileService` — диск и валидация; с `Users` взаимодействует только через `QueryBus`/`CommandBus` (те же `FindUserByIdQuery`/`UpdateUser*Command`), без прямого доступа к репозиторию.
+  - `profile.constants.ts` — `MAX_AVATAR_SIZE`, `AVATAR_STORED_NAME`, `getAvatarsDir()` (`uploads/avatars`; `getUploadsDir` из `files.constants`).
+  - `profile.module.ts` — регистрирует свой `JwtModule` с тем же секретом; пароль из ответа исключается (маппинг в контроллере).
+
+  **Поведение после перезапуска:** как и у встреч — пользователи (включая `avatarPath`/`avatarMimeType`) хранятся in-memory и сбрасываются при перезапуске; аватары на диске в `uploads/avatars/<userId>/avatar` остаются, но после перезапуска игнорируются как «осиротевшие». Очистка диска при перезапуске не выполняется намеренно.
 
 При добавлении нового модуля/контроллера держать инъекцию через стандартный NestDI (`constructor(private readonly service: XService)`), фичи объявлять в `AppModule`/или в подмодуле. Защищённые эндпоинты — через `JwtAuthGuard`.
 
