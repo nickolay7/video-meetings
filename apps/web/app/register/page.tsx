@@ -32,13 +32,15 @@ export default function RegisterPage() {
     const formData = new FormData(e.currentTarget);
     const email = String(formData.get('email') ?? '');
     const password = String(formData.get('password') ?? '');
+    const name = String(formData.get('name') ?? '').trim();
 
     setIsSubmitting(true);
     try {
       const res = await fetch(`${API_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        // Необязательное имя: при пустом поле регистрируемся без имени.
+        body: JSON.stringify({ email, password, name: name || undefined }),
       });
 
       if (res.ok) {
@@ -86,6 +88,13 @@ export default function RegisterPage() {
               <Label>Email</Label>
               <Input placeholder="you@example.com" />
               <Description>Используется для входа в аккаунт</Description>
+              <FieldError />
+            </TextField>
+
+            <TextField name="name" autoComplete="name">
+              <Label>Имя</Label>
+              <Input placeholder="Как вас зовут?" />
+              <Description>Необязательно. Без имени вы будете видеть свой email</Description>
               <FieldError />
             </TextField>
 
