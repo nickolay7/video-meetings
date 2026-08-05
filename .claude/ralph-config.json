@@ -1,0 +1,16 @@
+{
+  "maxIterations": 10,
+  "active": false,
+  "prompt": "Прочитай .claude/ralph.md и следуй правилам оттуда. Возьми следующую открытую Issue из milestone '{milestone}' и реализуй его в '{branch}'",
+  "maxTurns": 500,
+  "phases": [
+    {
+      "branch": "feature/phase-7",
+      "milestone": "Фаза 3: Frontend — Profile Pages"
+    },
+    {
+      "branch": "feature/phase-8",
+      "milestone": "Фаза 4: Frontend — Header Integration"
+    }
+  ]
+}
