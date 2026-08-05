@@ -48,6 +48,7 @@ eslint.config.mjs   # единый flat-конфиг ESLint
 ## Документация
 
 - [PRD: загрузка файлов встречи](./docs/meeting-file-upload.md) · [План](./docs/meeting-file-upload-plan.md) · [Ресерч реализации](./docs/research-meeting-file-upload.md)
+- [PRD: профиль пользователя](./docs/user-profile.md) · [План](./docs/user-profile-plan.md) · [Ресерч реализации](./docs/research-user-profile.md)
 
 ## Соглашения
 
