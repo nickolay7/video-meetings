@@ -38,7 +38,7 @@ export class ProfileController {
     @Body() dto: UpdateProfileDto,
   ): Promise<ProfileResponse> {
     const user = await this.commandBus.execute(
-      new UpdateUserNameCommand(req.userId!, dto.name || undefined),
+      new UpdateUserNameCommand(req.userId!, dto.name?.trim() || undefined),
     );
     if (!user) {
       throw new NotFoundException('User not found');

@@ -134,6 +134,32 @@ describe('Profile (e2e)', () => {
         });
     });
 
+    it('should treat a whitespace-only name as no name', async () => {
+      const token = await registerAndGetToken('ws-clear@example.com', 'Alice');
+
+      return request(app.getHttpServer())
+        .patch('/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: '   ' })
+        .expect(200)
+        .expect((res) => {
+          expect(res.body.name).toBeUndefined();
+        });
+    });
+
+    it('should trim a non-empty name', async () => {
+      const token = await registerAndGetToken('ws-trim@example.com', 'Alice');
+
+      return request(app.getHttpServer())
+        .patch('/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: '  Bob  ' })
+        .expect(200)
+        .expect((res) => {
+          expect(res.body.name).toBe('Bob');
+        });
+    });
+
     it('should reject a non-string name (400)', async () => {
       const token = await registerAndGetToken('bad-name@example.com');
 
