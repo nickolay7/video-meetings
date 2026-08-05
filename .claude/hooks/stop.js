@@ -1,7 +1,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 
-const config = JSON.parse(fs.readFileSync('.claude/ralph.config.json', 'utf8'));
+const config = JSON.parse(fs.readFileSync('.claude/ralph-config.json', 'utf8'));
 
 if (!config.active) process.exit(0);
 
