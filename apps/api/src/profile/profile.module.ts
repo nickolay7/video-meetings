@@ -3,6 +3,7 @@ import { CqrsModule } from '@nestjs/cqrs';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ProfileController } from './profile.controller';
+import { ProfileService } from './profile.service';
 
 @Module({
   imports: [
@@ -12,6 +13,6 @@ import { ProfileController } from './profile.controller';
     }),
   ],
   controllers: [ProfileController],
-  providers: [JwtAuthGuard],
+  providers: [JwtAuthGuard, ProfileService],
 })
 export class ProfileModule {}

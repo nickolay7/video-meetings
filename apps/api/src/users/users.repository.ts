@@ -30,6 +30,29 @@ export class UsersRepository {
     return user;
   }
 
+  async updateAvatar(
+    id: string,
+    avatarPath: string,
+    avatarMimeType: string,
+  ): Promise<User | undefined> {
+    const user = await this.findById(id);
+    if (!user) {
+      return undefined;
+    }
+    user.avatarPath = avatarPath;
+    user.avatarMimeType = avatarMimeType;
+    return user;
+  }
+
+  async updatePassword(id: string, hashedPassword: string): Promise<User | undefined> {
+    const user = await this.findById(id);
+    if (!user) {
+      return undefined;
+    }
+    user.password = hashedPassword;
+    return user;
+  }
+
   async clear(): Promise<void> {
     this.users.clear();
     this.idCounter = 1;
