@@ -31,7 +31,7 @@ const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 export default function ProfileEditPage() {
   const router = useRouter();
   const { profile, isLoading, refresh, update } = useProfile();
-  const { avatarUrl, refresh: refreshAvatar, setAvatarUrl } = useAvatar();
+  const { avatarUrl, refresh: refreshAvatar, setPreviewUrl, resetPreview } = useAvatar();
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
@@ -138,8 +138,8 @@ export default function ProfileEditPage() {
     }
 
     setAvatarError(null);
-    // Превью выбранного файла; при ошибке загрузки восстановим прежний аватар.
-    setAvatarUrl(URL.createObjectURL(file));
+    // Превью выбранного файла; серверный аватар сохраняется в хуке для отката.
+    setPreviewUrl(URL.createObjectURL(file));
 
     const token = getAccessToken();
     if (!token) {
@@ -162,28 +162,33 @@ export default function ProfileEditPage() {
         handleUnauthorized();
         return;
       }
+      // Ошибка: возвращаем прежний аватар без round-trip к сети.
       if (res.status === 400) {
         setAvatarError('Файл не является изображением. Загрузите картинку.');
-        await refreshAvatar();
+        resetPreview();
         return;
       }
       if (res.status === 413) {
         setAvatarError('Файл слишком большой. Максимальный размер — 5 МБ.');
-        await refreshAvatar();
+        resetPreview();
         return;
       }
       if (!res.ok) {
         setAvatarError('Не удалось загрузить аватар. Попробуйте ещё раз.');
-        await refreshAvatar();
+        resetPreview();
         return;
       }
 
       const data: Profile = await res.json();
       update(data);
-      await refreshAvatar();
+      try {
+        await refreshAvatar();
+      } catch {
+        // Загрузка прошла успешно — предпросмотр уже показывает новый файл.
+      }
     } catch {
       setAvatarError('Ошибка подключения к серверу. Попробуйте ещё раз.');
-      await refreshAvatar();
+      resetPreview();
     } finally {
       setIsUploadingAvatar(false);
     }
@@ -219,11 +224,16 @@ export default function ProfileEditPage() {
 
       if (!res.ok) {
         // 400 при неверном старом пароле; форма не сбрасывается, пока ошибка не устранена.
-        setPasswordError(
-          res.status === 400
-            ? 'Неверный текущий пароль'
-            : 'Не удалось изменить пароль. Попробуйте ещё раз.',
-        );
+        // Различаем по message из тела ответа: сервер отдаёт 400 и при нарушении DTO.
+        let message = 'Не удалось изменить пароль. Попробуйте ещё раз.';
+        if (res.status === 400) {
+          const data = (await res.json().catch(() => null)) as { message?: unknown } | null;
+          message =
+            data?.message === 'Old password is incorrect'
+              ? 'Неверный текущий пароль'
+              : 'Проверьте корректность введённых данных';
+        }
+        setPasswordError(message);
         return;
       }
 
