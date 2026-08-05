@@ -16,6 +16,7 @@ export class RegisterCommandHandler implements ICommandHandler<RegisterCommand> 
 
   async execute(command: RegisterCommand): Promise<{ access_token: string }> {
     const { email, password } = command;
+    const name = command.name?.trim() || undefined;
 
     const existingUser = await this.queryBus.execute(new FindUserByEmailQuery(email));
     if (existingUser) {
@@ -23,7 +24,7 @@ export class RegisterCommandHandler implements ICommandHandler<RegisterCommand> 
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await this.commandBus.execute(new CreateUserCommand(email, hashedPassword));
+    const user = await this.commandBus.execute(new CreateUserCommand(email, hashedPassword, name));
 
     const payload = { sub: user.id, email: user.email };
     const access_token = this.jwtService.sign(payload);

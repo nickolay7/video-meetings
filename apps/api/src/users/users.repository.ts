@@ -6,9 +6,9 @@ export class UsersRepository {
   private users: Map<string, User> = new Map();
   private idCounter = 1;
 
-  async create(email: string, hashedPassword: string): Promise<User> {
+  async create(email: string, hashedPassword: string, name?: string): Promise<User> {
     const id = String(this.idCounter++);
-    const user = new User(id, email, hashedPassword);
+    const user = new User(id, email, hashedPassword, name);
     this.users.set(email, user);
     return user;
   }

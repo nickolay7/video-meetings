@@ -7,8 +7,12 @@ import { LoginCommand } from './commands/login.command';
 export class AuthService {
   constructor(private readonly commandBus: CommandBus) {}
 
-  async register(email: string, password: string): Promise<{ access_token: string }> {
-    return this.commandBus.execute(new RegisterCommand(email, password));
+  async register(
+    email: string,
+    password: string,
+    name?: string,
+  ): Promise<{ access_token: string }> {
+    return this.commandBus.execute(new RegisterCommand(email, password, name));
   }
 
   async login(email: string, password: string): Promise<{ access_token: string }> {
