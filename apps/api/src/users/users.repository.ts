@@ -21,6 +21,15 @@ export class UsersRepository {
     return [...this.users.values()].find((user) => user.id === id);
   }
 
+  async updateName(id: string, name?: string): Promise<User | undefined> {
+    const user = await this.findById(id);
+    if (!user) {
+      return undefined;
+    }
+    user.name = name;
+    return user;
+  }
+
   async clear(): Promise<void> {
     this.users.clear();
     this.idCounter = 1;

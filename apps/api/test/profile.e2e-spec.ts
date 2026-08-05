@@ -87,4 +87,96 @@ describe('Profile (e2e)', () => {
         .expect(401);
     });
   });
+
+  describe('/profile (PATCH)', () => {
+    it('should update the name and return the updated profile', async () => {
+      const token = await registerAndGetToken('patch@example.com', 'Alice');
+
+      return request(app.getHttpServer())
+        .patch('/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Bob' })
+        .expect(200)
+        .expect((res) => {
+          expect(res.body.email).toBe('patch@example.com');
+          expect(res.body.name).toBe('Bob');
+        });
+    });
+
+    it('should persist the updated name (visible via GET /profile)', async () => {
+      const token = await registerAndGetToken('persist@example.com');
+
+      await request(app.getHttpServer())
+        .patch('/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Charlie' })
+        .expect(200);
+
+      return request(app.getHttpServer())
+        .get('/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200)
+        .expect((res) => {
+          expect(res.body.name).toBe('Charlie');
+        });
+    });
+
+    it('should clear the name when an empty string is sent', async () => {
+      const token = await registerAndGetToken('clear@example.com', 'Alice');
+
+      return request(app.getHttpServer())
+        .patch('/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: '' })
+        .expect(200)
+        .expect((res) => {
+          expect(res.body.name).toBeUndefined();
+        });
+    });
+
+    it('should reject a non-string name (400)', async () => {
+      const token = await registerAndGetToken('bad-name@example.com');
+
+      return request(app.getHttpServer())
+        .patch('/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 123 })
+        .expect(400);
+    });
+
+    it('should reject a body without name (400)', async () => {
+      const token = await registerAndGetToken('no-name@example.com');
+
+      return request(app.getHttpServer())
+        .patch('/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .send({})
+        .expect(400);
+    });
+
+    it('should reject unknown fields (400)', async () => {
+      const token = await registerAndGetToken('extra@example.com');
+
+      return request(app.getHttpServer())
+        .patch('/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Dave', email: 'hacked@example.com' })
+        .expect(400);
+    });
+
+    it('should reject a request without a token (401)', () => {
+      return request(app.getHttpServer()).patch('/profile').send({ name: 'Bob' }).expect(401);
+    });
+
+    it('should return 404 when the authenticated user no longer exists', async () => {
+      const token = await registerAndGetToken('gone-patch@example.com');
+      await usersRepository.clear();
+
+      return request(app.getHttpServer())
+        .patch('/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Bob' })
+        .expect(404);
+    });
+  });
 });
