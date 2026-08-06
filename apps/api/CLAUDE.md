@@ -65,6 +65,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Nest компилирует TypeScript (`commonjs`, декораторы) через `nest-cli.json` (`sourceRoot: src`, `deleteOutDir: true`). Типы/outDir — в `tsconfig.json`; `tsconfig.build.json` исключает `test` и `*.spec.ts`.
 
+## Правила кода (CLAUDE.md)
+
+При написании/рефакторинге кода API соблюдать следующие правила. При противоречиях с текущим кодом — правила CLAUDE.md важнее, старый код приводится в соответствие.
+
+- **Строгая типизация параметров и возвращаемых значений**: каждый параметр метода сервиса/хендлера имеет явный TypeScript-тип; возвращаемый тип указывается через `Promise<...>` (даже если `async` уже подразумевает Promise).
+- **Логгер вместо `console.log`**: использовать инжектированный `Logger` (`@nestjs/common`), методы `log`, `warn`, `error`, `debug`. Прямые `console.*` запрещены.
+- **`NotFoundException` при отсутствии сущности**: если запрашиваемая запись не найдена (в репозитории/БД) — бросать `NotFoundException` (`@nestjs/common`), а не возвращать `null`/`undefined` или 404 вручную.
+- **Смысловые имена переменных**: никаких `data`, `res`, `item`, `temp` — имя отражает доменную сущность (`meeting`, `userProfile`, `uploadedFile`, `avatarBuffer` и т.п.).
+- **Перед изменением кода — перечитать этот CLAUDE.md**.
+
 ## Полезные команды
 
 Из корня монорепо:
