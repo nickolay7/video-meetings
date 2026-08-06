@@ -27,7 +27,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `src/users/` — модуль пользователей с CQRS-фасадом для межмодульного взаимодействия:
   - `commands/create-user.command.ts` + handler — создание пользователя;
   - `queries/find-user-by-email.query.ts` + handler — поиск по e-mail;
-  - `queries/find-user-by-id.query.ts` + handler — поиск по id (для будущего «профиля»);
+  - `queries/find-user-by-id.query.ts` + handler — поиск по id (используется модулем `profile`);
   - `users.repository.ts` — in-memory (Map по e-mail + счётчик id), сущность `User`; e2e чистит через `clear()`.
   - Хендлеры регистрируются в общем `CommandBus`/`QueryBus` (модуль импортирует `CqrsModule`), поэтому Auth выполняет команды/запросы Users без прямой зависимости от репозитория.
 - `src/meetings/` — базовый CRUD без бизнес-логики:
@@ -40,7 +40,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `FilesService` — проверяет существование встречи (404), лимит **20 МБ** (413), «санирует» имя файла (берёт только имя без путей) и пишет файл на диск в `apps/api/uploads/<meetingId>/<storedName>`. `list()` возвращает метаданные встречи; `download()` читает файл с диска и даёт 404, если файл не найден, принадлежит другой встрече или отсутствует на диске (осиротел).
   - `files.repository.ts` — `findById`, `findByMeetingId` (в порядке загрузки, Map сохраняет порядок), `create`, `clear()`.
   - `meeting-file.entity.ts` — `MeetingFile` (id, meetingId, originalName, storedName, size, mimeType, uploadedAt).
-  - `files.repository.ts` — метаданные in-memory (по образцу MeetingsRepository), `clear()` для e2e.
   - `files.constants.ts` — `MAX_FILE_SIZE` и `getUploadsDir()` (путь зависит от `__dirname`, корректно и в `src/`, и в `dist/`).
   - Уникальные имена на диске: `storedName = <uuid>-<originalName>` — файлы с одинаковым именем не перезаписывают друг друга.
   - `FilesModule` импортирует `MeetingsModule` (для проверки существования встречи).

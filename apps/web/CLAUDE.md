@@ -13,9 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - Базируется на **Tailwind CSS v4** + React Aria Components.
   - Пакеты: `@heroui/react` и `@heroui/styles` (НЕ ставить v2-архитектуру: `HeroUIProvider`, `@heroui/theme`, `framer-motion` — в v3 провайдер не нужен, анимации CSS).
   - На корне включён `prettier-plugin-tailwindcss`.
-- На этапе инициализации HeroUI ещё не настроен — при интеграции следовать официальному гайду v3 (см. контекст/скилл heroui-react). Импорт: `@import "tailwindcss"` затем `@import "@heroui/styles"` в `globals.css`; Tailwind v4 через `@tailwindcss/postcss`.
-
-> Пока фронтенд на простом CSS без Tailwind. Файл `app/globals.css` содержит обычные стили — при подключении HeroUI заменить на Tailwind-директивы.
+- Импорт в `globals.css`: `@import "tailwindcss"` затем `@import "@heroui/styles"`; Tailwind v4 через `@tailwindcss/postcss`.
 
 ## Архитектура
 
