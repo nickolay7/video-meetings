@@ -1,9 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Avatar, Badge, Button, Card, Chip, Spinner } from '@heroui/react';
 import { FilesModal } from '../components/files/files-modal';
+import {
+  displayName,
+  getAccessToken,
+  getInitials,
+  ProfileUnauthorizedError,
+  useAvatar,
+  useProfile,
+} from '../hooks/use-profile';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -16,29 +25,46 @@ interface Meeting {
 
 export default function HomePage() {
   const router = useRouter();
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  // Профиль и аватар — модульный кэш по токену: после правок на /profile/edit
+  // главная показывает обновлённые значения без ручного обновления.
+  const { profile, refresh } = useProfile();
+  const { avatarUrl, refresh: refreshAvatar } = useAvatar();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    if (!token) {
-      router.push('/login');
-      return;
+    let active = true;
+
+    async function load() {
+      const token = getAccessToken();
+      if (!token) {
+        router.push('/login');
+        return;
+      }
+
+      try {
+        await Promise.all([refresh(), fetchMeetings(token)]);
+        if (active) {
+          await refreshAvatar();
+        }
+      } catch (error) {
+        if (error instanceof ProfileUnauthorizedError) {
+          localStorage.removeItem('access_token');
+          router.push('/login');
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
     }
 
-    // Decode JWT to get email (simple decode without verification)
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      setUserEmail(payload.email ?? payload.sub ?? 'Пользователь');
-    } catch {
-      setUserEmail('Пользователь');
-    }
-
-    // Fetch meetings
-    fetchMeetings(token);
-  }, [router]);
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [router, refresh, refreshAvatar]);
 
   async function fetchMeetings(token: string) {
     try {
@@ -64,8 +90,6 @@ export default function HomePage() {
       }
     } catch (error) {
       console.error('Failed to fetch meetings:', error);
-    } finally {
-      setIsLoading(false);
     }
   }
 
@@ -119,17 +143,26 @@ export default function HomePage() {
 
   return (
     <main className="bg-background text-foreground flex min-h-screen flex-col items-center gap-8 px-6 py-12">
-      {/* Header */}
+      {/* Header: аватар и имя пользователя — ссылка на /profile */}
       <header className="flex w-full max-w-5xl items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Avatar color="accent">VM</Avatar>
+        <Link
+          href="/profile"
+          className="flex items-center gap-3 transition-opacity hover:opacity-80"
+        >
+          <Avatar color="accent">
+            {avatarUrl ? (
+              <Avatar.Image src={avatarUrl} alt="Фото профиля" />
+            ) : (
+              <Avatar.Fallback>{profile ? getInitials(profile) : 'VM'}</Avatar.Fallback>
+            )}
+          </Avatar>
           <div>
             <h1 className="text-xl font-bold">Video Meetings</h1>
             <p className="text-muted-foreground text-sm">
-              {userEmail ? `Привет, ${userEmail}` : 'Платформа видеоконференций'}
+              {profile ? `Привет, ${displayName(profile)}` : 'Платформа видеоконференций'}
             </p>
           </div>
-        </div>
+        </Link>
         <div className="flex items-center gap-3">
           <Badge color="success" variant="primary">
             Online
