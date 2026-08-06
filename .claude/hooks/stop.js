@@ -1,5 +1,8 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
+
+const projectRoot = path.join(__dirname, '..', '..');
 
 // Ненулевой код выхода вложенной сессии (например, достигнут --max-turns) —
 // нормальный конец итерации, а не повод ронять весь цикл
@@ -13,11 +16,13 @@ const runClaude = (cmd) => {
   }
 };
 
-const config = JSON.parse(fs.readFileSync('.claude/ralph-config.json', 'utf8'));
+const config = JSON.parse(
+  fs.readFileSync(path.join(projectRoot, '.claude/ralph-config.json'), 'utf8'),
+);
 
 if (!config.active) process.exit(0);
 
-const counterFile = '.claude/ralph.iterations.json';
+const counterFile = path.join(projectRoot, '.claude/ralph.iterations.json');
 let counter = { count: 0, phaseIndex: 0 };
 if (fs.existsSync(counterFile)) {
   counter = JSON.parse(fs.readFileSync(counterFile, 'utf8'));
