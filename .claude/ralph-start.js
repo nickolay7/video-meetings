@@ -13,7 +13,7 @@ const prompt = config.prompt
 console.log(`🚀 Запускаем Ralph для milestone: ${config.phases[0].milestone}`);
 
 try {
-  execSync(`fcc-claude -p "${prompt}" --max-turns ${config.maxTurns}`, { stdio: 'inherit' });
+  execSync(`claude -p "${prompt}" --max-turns ${config.maxTurns}`, { stdio: 'inherit' });
 } catch {
   // Ненулевой код выхода (например, достигнут --max-turns) — нормальный конец итерации, не краш
   console.log('⚠️ Итерация завершилась с ненулевым кодом (вероятно, лимит ходов). Продолжаем.');
