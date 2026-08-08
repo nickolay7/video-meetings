@@ -49,6 +49,19 @@ export class FilesService {
     return this.filesRepository.findByMeetingId(meetingId);
   }
 
+  /**
+   * Возвращает метаданные файла в контексте встречи (используется транскрибацией):
+   * 404, если встреча не существует, файл не найден или принадлежит другой встрече.
+   */
+  async findForMeeting(meetingId: string, fileId: string): Promise<MeetingFile> {
+    await this.assertMeetingExists(meetingId);
+    const file = await this.filesRepository.findById(fileId);
+    if (!file || file.meetingId !== meetingId) {
+      throw new NotFoundException(`File with id ${fileId} not found`);
+    }
+    return file;
+  }
+
   /** Возвращает файл и его содержимое с диска для скачивания. */
   async download(
     meetingId: string,

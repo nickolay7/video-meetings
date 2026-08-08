@@ -6,9 +6,17 @@ import { UsersModule } from './users/users.module';
 import { MeetingsModule } from './meetings/meetings.module';
 import { FilesModule } from './files/files.module';
 import { ProfileModule } from './profile/profile.module';
+import { TranscriptionModule } from './transcription/transcription.module';
 
 @Module({
-  imports: [AuthModule, UsersModule, MeetingsModule, FilesModule, ProfileModule],
+  imports: [
+    AuthModule,
+    UsersModule,
+    MeetingsModule,
+    FilesModule,
+    ProfileModule,
+    TranscriptionModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

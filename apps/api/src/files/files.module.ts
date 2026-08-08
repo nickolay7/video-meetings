@@ -15,5 +15,6 @@ import { FilesRepository } from './files.repository';
   ],
   controllers: [FilesController],
   providers: [JwtAuthGuard, FilesService, FilesRepository],
+  exports: [FilesService],
 })
 export class FilesModule {}

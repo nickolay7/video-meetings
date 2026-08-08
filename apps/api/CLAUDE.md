@@ -46,6 +46,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
   **Поведение после перезапуска:** метаданные форм хранятся in-memory и сбрасываются вместе с репозиториями (как у встреч); файлы, ранее записанные на диск, остаются, но при перезапуске игнорируются как «осиротевшие» — API их не знает. Очистка диска при перезапуске не выполняется намеренно.
 
+- `src/transcription/` — транскрибация файлов встречи (MP4/MP3) локальным Whisper:
+  - `TranscriptionController` — под `@UseGuards(JwtAuthGuard)` (без токена 401). Эндпоинты:
+    - `POST /meetings/:id/files/:fileId/transcribe` — постановка файла в очередь → 201 `{ status: 'queued' }`; 404, если встреча/файл не существуют или файл принадлежит другой встрече; 400 для не-MP4/MP3; 409 при повторном запуске завершённого файла или повторной постановке файла, уже стоящего в очереди/обрабатываемого. После статуса `failed` повторный запуск разрешён.
+    - `GET /meetings/:id/files/:fileId/transcription/status` → 200 `{ status: 'none'|'queued'|'processing'|'completed'|'failed', error? }` (`none` — файл ещё не транскрибировался).
+    - `GET /meetings/:id/files/:fileId/transcription` → 200 `{ text }` при `completed`; 409 с понятным сообщением до завершения.
+  - `TranscriptionService` — очередь с последовательной обработкой: promise-цепочка (`queueTail`) гарантирует, что одновременно транскрибируется ровно один файл; статусы проходят `queued → processing → completed`/`failed`. При сбое Whisper — `failed` с сообщением в `error`, файл можно поставить заново. Существование встречи/файла проверяется через `FilesService.findForMeeting` (логика не дублируется). `clear()` сбрасывает очередь и метаданные (используется e2e).
+  - `SpeechTranscriber` — интерфейс `transcribe(inputPath): Promise<string>` с DI-токеном `SPEECH_TRANSCRIBER`; реальная реализация `WhisperTranscriber` — обёртка над CLI Whisper через `child_process` (`execFile`). Способ интеграции: по умолчанию команда `whisper` (openai-whisper CLI), аргументы настроены под неё (`--output_format txt`, `--fp16 False`); команда переопределяется через env `WHISPER_COMMAND` (например, `main` от whisper.cpp). Модель задаётся через env `WHISPER_MODEL` (default `base`, лёгкие base/low) и загружается **лениво при первом транскрибировании** (CLI сам скачивает/кеширует модель), а не в `onModuleInit` — поэтому e2e с замоканным транскрибатором модель не тянут. Таймаут выполнения задаётся через env `WHISPER_TIMEOUT_MS` (default 30 минут) — зависший CLI-процесс убивается и не блокирует очередь навсегда.
+  - `TranscriptionRepository` — in-memory (Map по `fileId`, одна транскрибация на файл), `create`, `findByFileId`, `save`, `clear()`; сущность `Transcription` (fileId, meetingId, status, error, text, createdAt).
+  - Ограничение форматов: транскрибируются только **MP3/MP4** — файл принимается, если подходит расширение ИЛИ MIME-тип (`SUPPORTED_TRANSCRIPTION_EXTENSIONS`/`SUPPORTED_TRANSCRIPTION_MIME_TYPES` в `transcription.constants.ts`); остальные форматы отклоняются 400.
+  - `TranscriptionModule` импортирует `FilesModule` (переиспользует `FilesService`) и регистрирует свой `JwtModule` с тем же секретом.
+
+  **Поведение после перезапуска:** метаданные транскрибации (статусы, текст, ошибки) хранятся in-memory и сбрасываются при перезапуске; файл на диске остаётся, кнопка «Транскрибировать» снова доступна (как у Files). Очистка диска при перезапуске не выполняется.
+
 - `src/profile/` — профиль авторизованного пользователя:
   - `ProfileController` — под `@UseGuards(JwtAuthGuard)` (без токена 401, при отсутствии пользователя — 404). Эндпоинты:
     - `GET /profile` — возвращает `{ id, email, name }` текущего пользователя через `FindUserByIdQuery`;

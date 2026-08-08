@@ -46,6 +46,7 @@ NPM-монорепозиторий (npm workspaces) платформы виде�
 
 - [PRD: загрузка файлов встречи](./docs/meeting-file-upload.md) · [План](./docs/meeting-file-upload-plan.md) · [Ресерч реализации](./docs/research-meeting-file-upload.md)
 - [PRD: профиль пользователя](./docs/user-profile.md) · [План](./docs/user-profile-plan.md) · [Ресерч реализации](./docs/research-user-profile.md)
+- [PRD: транскрибация файлов встречи](./docs/meeting-file-transcription.md) · [План](./docs/meeting-file-transcription-plan.md)
 
 ## Соглашения
 
