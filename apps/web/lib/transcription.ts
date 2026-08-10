@@ -31,3 +31,19 @@ export function isTranscribableFile(file: { originalName: string; mimeType: stri
     SUPPORTED_TRANSCRIPTION_MIME_TYPES.includes(file.mimeType)
   );
 }
+
+/** Статусы генерации инсайтов (совпадают со статусами backend). */
+export type InsightsStatus = 'queued' | 'processing' | 'completed' | 'failed';
+
+/** Ответ GET .../insights/status. */
+export type InsightsStatusResponse = {
+  status: 'none' | InsightsStatus;
+  error?: string;
+};
+
+/** Данные инсайтов (GET .../insights). */
+export interface InsightsData {
+  summary: string;
+  actionItems: { text: string; assignee?: string }[];
+  decisions: { text: string }[];
+}
