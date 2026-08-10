@@ -14,6 +14,12 @@ import {
 } from '../src/transcription/speech-transcriber.interface';
 import { getUploadsDir } from '../src/files/files.constants';
 
+// ClaudeModule зарегистрирован в AppModule и тянет ESM-only SDK (@anthropic-ai/claude-agent-sdk),
+// который Jest (CJS) не может распарсить. Мокаем на уровне модуля.
+jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  query: jest.fn(),
+}));
+
 describe('Transcription (e2e)', () => {
   let app: INestApplication;
   let usersRepository: UsersRepository;

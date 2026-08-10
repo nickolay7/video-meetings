@@ -7,6 +7,12 @@ import { AppModule } from '../src/app.module';
 import { UsersRepository } from '../src/users/users.repository';
 import { getAvatarsDir, MAX_AVATAR_SIZE } from '../src/profile/profile.constants';
 
+// ClaudeModule зарегистрирован в AppModule и тянет ESM-only SDK (@anthropic-ai/claude-agent-sdk),
+// который Jest (CJS) не может распарсить. Мокаем на уровне модуля, как в claude.e2e-spec.ts.
+jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  query: jest.fn(),
+}));
+
 describe('Profile (e2e)', () => {
   let app: INestApplication;
   let usersRepository: UsersRepository;
