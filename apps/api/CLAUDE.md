@@ -16,7 +16,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Разделена фабрика приложения и bootstrap для гибкости тестов:
 
 - `src/app.factory.ts` — `createApp()`: создаёт `INestApplication`, применяет CORS. Логика сборки приложения здесь; переиспользуется main и (в будущем) e2e-тесты.
-- `src/main.ts` — `bootstrap()`: читает порт, вызывает `createApp()`, `app.listen()`. Только точка входа.
+- `src/main.ts` — `bootstrap()`: сначала `loadEnvConfig()` (поднимает корневой `.env` монорепо в `process.env`), затем читает порт, вызывает `createApp()`, `app.listen()`. Только точка входа.
+- `src/env.ts` — `loadEnvConfig()`: идемпотентно загружает корневой `.env` через `dotenv` (путь считается от `__dirname`, одинаково работает в `src/` и `dist/`). Вызывается в `main.ts`; Node-тест реального вызова тоже вызывает её.
 - `src/app.module.ts` — корневой модуль.
 - `src/app.controller.ts` — контроллер `@Controller()` с эндпоинтом `GET /`.
 - `src/app.service.ts` — сервис, возвращает `{ status: 'ok', uptime }`.
@@ -72,6 +73,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
   **Поведение после перезапуска:** как и у встреч — пользователи (включая `avatarPath`/`avatarMimeType`) хранятся in-memory и сбрасываются при перезапуске; аватары на диске в `uploads/avatars/<userId>/avatar` остаются, но после перезапуска игнорируются как «осиротевшие». Очистка диска при перезапуске не выполняется намеренно.
 
+- `src/claude/` — интеграционный слой с Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) без HTTP-контроллеров:
+  - `ClaudeAgentService` — `run(prompt, { systemPrompt?, maxTurns? }): Promise<string>`: спавнит CLI Claude Code (платформенный бинарь из optionalDependencies SDK) и возвращает текст ответа через локальный гейтвей. Аутентификация — `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` из корневого `.env` (пробрасываются в окружение CLI через `options.env`); режим разрешений headless — `CLAUDE_PERMISSION_MODE` (default `bypassPermissions`); модель — `CLAUDE_MODEL` (default — дефолт CLI); таймаут — `CLAUDE_TIMEOUT_MS` (default 120 с) через `AbortController`.
+  - `claude.constants.ts` — конфиг-геттеры по образцу `transcription.constants.ts`.
+  - **ESM-зависимость:** SDK — ESM-only, поэтому CommonJS-сборка Nest требует **Node ≥ 22.12** (`require(esm)`). Jest (CJS) SDK не загружает: логика сервиса покрыта тестом с замоканным SDK (`claude.e2e-spec.ts`), реальный вызов — отдельным Node-тестом `test:claude` (`node --test`, собирает API и прогоняет `test/claude.real.test.mjs`; пропускается без кредов в `.env`).
+  - `ClaudeModule` экспортирует `ClaudeAgentService` для других модулей; зарегистрирован в `AppModule`.
+
 При добавлении нового модуля/контроллера держать инъекцию через стандартный NestDI (`constructor(private readonly service: XService)`), фичи объявлять в `AppModule`/или в подмодуле. Защищённые эндпоинты — через `JwtAuthGuard`.
 
 ## Сборка
@@ -95,4 +102,5 @@ Nest компилирует TypeScript (`commonjs`, декораторы) чер
 - `npm run dev:api` — dev с watch-режимом (порт 3001)
 - `npm run build:api` — сборка в `dist/`
 - `npm test` (алиас `npm run test:e2e`) — e2e-тесты (супертест, in-memory репозитории, БД не нужна)
+- `npm run test:claude --workspace @video-meetings/api` — реальный вызов Claude через `.env` (Node `node --test`; предварительно собирает API; пропускается без кредов)
 - Запуск собранного билда: `npm start --workspace @video-meetings/api` (или `node apps/api/dist/main`)

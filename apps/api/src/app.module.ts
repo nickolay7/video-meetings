@@ -7,6 +7,7 @@ import { MeetingsModule } from './meetings/meetings.module';
 import { FilesModule } from './files/files.module';
 import { ProfileModule } from './profile/profile.module';
 import { TranscriptionModule } from './transcription/transcription.module';
+import { ClaudeModule } from './claude/claude.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { TranscriptionModule } from './transcription/transcription.module';
     FilesModule,
     ProfileModule,
     TranscriptionModule,
+    ClaudeModule,
   ],
   controllers: [AppController],
   providers: [AppService],
