@@ -12,9 +12,11 @@ import {
   SPEECH_TRANSCRIBER,
   SpeechTranscriber,
 } from '../src/transcription/speech-transcriber.interface';
+import { DecisionItem } from '../src/insights/meeting-insights.entity';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
-// Мокаем Claude SDK — возвращаем валидный JSON с инсайтами
+// Мокаем Claude SDK — ESM-only пакет, который Jest (CJS) не может распарсить.
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: jest.fn(),
   tool: (name: string, description: string, inputSchema: unknown, handler: unknown) => ({
@@ -28,23 +30,15 @@ jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const mockedQuery = query as jest.MockedFunction<typeof query>;
 
-/** Имитация потока сообщений SDK (AsyncGenerator) с JSON-результатом. */
-function resultStream(data: unknown) {
-  return {
-    async *[Symbol.asyncIterator]() {
-      yield { type: 'result', subtype: 'success', result: JSON.stringify(data) };
-    },
-  };
+/** Что «решает» агент в текущем тесте: данные, по которым мок query драйвит инструменты. */
+interface SimulatedAgentData {
+  summary: string;
+  actionItems: { text: string; assignee?: string }[];
+  decisions: DecisionItem[];
 }
 
-/** Имитация потока с ошибкой. */
-function errorStream(errors: string[]) {
-  return {
-    async *[Symbol.asyncIterator]() {
-      yield { type: 'result', subtype: 'error_during_execution', errors };
-    },
-  };
-}
+/** Мок хендлера MCP-инструмента (реальный хендлер из meeting-tool.ts). */
+type MockToolHandler = (args: Record<string, unknown>) => Promise<CallToolResult>;
 
 /** Фейковый SpeechTranscriber: возвращает заданный текст без реального Whisper. */
 class FakeTranscriber implements SpeechTranscriber {
@@ -69,6 +63,53 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
 
   const fakeTranscriber = new FakeTranscriber();
 
+  /** Параметры имитации агента — задаются в каждом тесте, потребляются моком query. */
+  const agent = {
+    data: null as SimulatedAgentData | null,
+    shouldFail: false,
+  };
+
+  /**
+   * Мокаем query так, чтобы он имитировал агента: читает MCP-инструменты meeting-сервера
+   * из опций запроса и драйвит их по заданным данным — для каждого action item создаёт
+   * задачу (updateTask, source `insights`), пишет summary во встречу (updateMeeting) и
+   * возвращает финальный JSON { summary, decisions }.
+   */
+  (mockedQuery as unknown as jest.Mock).mockImplementation(async function* (request: {
+    options?: {
+      mcpServers?: {
+        meeting?: { tools?: { name: string; handler: MockToolHandler }[] };
+      };
+    };
+  }) {
+    if (agent.shouldFail) {
+      yield { type: 'result', subtype: 'error_during_execution', errors: ['Claude API error'] };
+      return;
+    }
+    if (!agent.data) {
+      throw new Error('agent.data is not set');
+    }
+    const tools = request.options?.mcpServers?.meeting?.tools ?? [];
+    const updateTask = tools.find((tool) => tool.name === 'updateTask')?.handler;
+    const updateMeeting = tools.find((tool) => tool.name === 'updateMeeting')?.handler;
+
+    for (const actionItem of agent.data.actionItems) {
+      await updateTask?.({
+        meetingId,
+        title: actionItem.text,
+        assignee: actionItem.assignee,
+        source: 'insights',
+      });
+    }
+    await updateMeeting?.({ meetingId, summary: agent.data.summary });
+
+    yield {
+      type: 'result',
+      subtype: 'success',
+      result: JSON.stringify({ summary: agent.data.summary, decisions: agent.data.decisions }),
+    };
+  });
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -90,6 +131,8 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    agent.data = null;
+    agent.shouldFail = false;
 
     await request(app.getHttpServer())
       .post('/auth/register')
@@ -134,16 +177,11 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
   });
 
   it('should generate insights after transcription completes', async () => {
-    mockedQuery.mockReturnValue(
-      resultStream({
-        summary: 'Team discussed project timeline and budget.',
-        actionItems: [
-          { text: 'Prepare presentation', assignee: 'Alice' },
-          { text: 'Send minutes' },
-        ],
-        decisions: [{ text: 'Launch in Q3' }],
-      }) as unknown as ReturnType<typeof query>,
-    );
+    agent.data = {
+      summary: 'Team discussed project timeline and budget.',
+      actionItems: [{ text: 'Prepare presentation', assignee: 'Alice' }, { text: 'Send minutes' }],
+      decisions: [{ text: 'Launch in Q3' }],
+    };
 
     // Запускаем транскрибацию
     await request(app.getHttpServer())
@@ -172,12 +210,14 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
       actionItems: [{ text: 'Prepare presentation', assignee: 'Alice' }, { text: 'Send minutes' }],
       decisions: [{ text: 'Launch in Q3' }],
     });
+
+    // Агент записал summary во встречу через updateMeeting.
+    const storedMeeting = await meetingsRepository.findById(meetingId);
+    expect(storedMeeting?.summary).toBe('Team discussed project timeline and budget.');
   }, 10000);
 
   it('should set insights status to failed when Claude returns an error', async () => {
-    mockedQuery.mockReturnValue(
-      errorStream(['Claude API error']) as unknown as ReturnType<typeof query>,
-    );
+    agent.shouldFail = true;
 
     // Запускаем транскрибацию
     await request(app.getHttpServer())
@@ -199,21 +239,11 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
   }, 10000);
 
   it('should reset and regenerate insights on re-transcription', async () => {
-    const v1 = resultStream({
+    agent.data = {
       summary: 'First version summary',
       actionItems: [{ text: 'Task 1' }],
       decisions: [{ text: 'Decision 1' }],
-    });
-
-    const v2 = resultStream({
-      summary: 'Second version summary',
-      actionItems: [{ text: 'Task 2' }],
-      decisions: [{ text: 'Decision 2' }],
-    });
-
-    mockedQuery
-      .mockReturnValueOnce(v1 as unknown as ReturnType<typeof query>)
-      .mockReturnValueOnce(v2 as unknown as ReturnType<typeof query>);
+    };
 
     // Первая транскрибация
     await request(app.getHttpServer())
@@ -236,6 +266,13 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
     // Сначала сбрасываем статус транскрипции до failed (чтобы можно было перезапустить)
     const transcriptionService = app.get(TranscriptionService);
     await transcriptionService.clear();
+
+    // Вторая версия «решений агента»
+    agent.data = {
+      summary: 'Second version summary',
+      actionItems: [{ text: 'Task 2' }],
+      decisions: [{ text: 'Decision 2' }],
+    };
 
     // Перезапускаем
     await request(app.getHttpServer())
@@ -286,17 +323,7 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
 
     it('should regenerate insights from a completed transcription after a failure', async () => {
       // Первая генерация падает (например, Claude недоступен)
-      mockedQuery.mockReturnValueOnce(
-        errorStream(['Claude API error']) as unknown as ReturnType<typeof query>,
-      );
-      // Повторная генерация успешна
-      mockedQuery.mockReturnValueOnce(
-        resultStream({
-          summary: 'Regenerated summary',
-          actionItems: [{ text: 'Regenerated task', assignee: 'Bob' }],
-          decisions: [{ text: 'Regenerated decision' }],
-        }) as unknown as ReturnType<typeof query>,
-      );
+      agent.shouldFail = true;
 
       // Транскрибация запускает первую (неудачную) генерацию
       await request(app.getHttpServer())
@@ -312,6 +339,14 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
         .expect(200);
 
       expect(statusRes.body.status).toBe('failed');
+
+      // Повторная генерация успешна
+      agent.shouldFail = false;
+      agent.data = {
+        summary: 'Regenerated summary',
+        actionItems: [{ text: 'Regenerated task', assignee: 'Bob' }],
+        decisions: [{ text: 'Regenerated decision' }],
+      };
 
       // Повторяем генерацию из готовой транскрипции (Whisper не перезапускается)
       const retryRes = await request(app.getHttpServer())

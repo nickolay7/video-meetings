@@ -68,16 +68,19 @@ const updateTaskSchema = z.object({
   title: z.string().optional(),
   assignee: z.string().optional(),
   status: z.enum(['open', 'completed']).optional(),
+  source: z.enum(['manual', 'insights']).optional(),
 });
 
 /**
- * Создание новой задачи встречи (source `manual`) или обновление существующей:
- * переданные поля title/assignee/status применяются к задаче по taskId.
+ * Создание новой задачи встречи или обновление существующей: переданные поля
+ * title/assignee/status применяются к задаче по taskId. При создании (без taskId)
+ * `source` по умолчанию `manual`; агент инсайтов передаёт `insights`, чтобы задачи
+ * можно было очищать при перегенерации.
  */
 export function updateTaskTool(deps: MeetingToolDeps) {
   return tool(
     'updateTask',
-    'Create a new task for a meeting, or update an existing task (title, assignee, status). Provide taskId to update; without it a new task is created.',
+    'Create a new task for a meeting, or update an existing task (title, assignee, status). Provide taskId to update; without it a new task is created. When creating a task generated from meeting insights, set source to "insights".',
     updateTaskSchema.shape,
     async (args) => {
       const params = updateTaskSchema.parse(args);
@@ -103,7 +106,7 @@ export function updateTaskTool(deps: MeetingToolDeps) {
       const createdTask = await deps.tasksRepository.create(
         params.meetingId,
         params.title,
-        'manual',
+        params.source ?? 'manual',
         params.assignee,
       );
       return textResult(createdTask);

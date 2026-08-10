@@ -171,6 +171,22 @@ describe('Meeting MCP tools', () => {
       expect(task.assignee).toBe('Alice');
     });
 
+    it('creates an insights task when source is provided', async () => {
+      const meeting = await createMeeting();
+
+      const result = await callTool(updateTaskTool(deps()), {
+        meetingId: meeting.id,
+        title: 'Prepare slides',
+        assignee: 'Alice',
+        source: 'insights',
+      });
+
+      const task = resultText(result) as TaskJson;
+      expect(task.title).toBe('Prepare slides');
+      expect(task.source).toBe('insights');
+      expect(task.assignee).toBe('Alice');
+    });
+
     it('updates title, assignee and status of an existing task', async () => {
       const meeting = await createMeeting();
       const task = await createTask(meeting.id, 'Old title', 'Alice');

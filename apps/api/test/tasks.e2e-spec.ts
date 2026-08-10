@@ -14,6 +14,8 @@ import {
   SPEECH_TRANSCRIBER,
   SpeechTranscriber,
 } from '../src/transcription/speech-transcriber.interface';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { DecisionItem } from '../src/insights/meeting-insights.entity';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 // Мокаем Claude SDK — ESM-only пакет, который Jest (CJS) не может распарсить.
@@ -30,14 +32,15 @@ jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const mockedQuery = query as jest.MockedFunction<typeof query>;
 
-/** Имитация потока сообщений SDK (AsyncGenerator) с JSON-результатом. */
-function resultStream(data: unknown) {
-  return {
-    async *[Symbol.asyncIterator]() {
-      yield { type: 'result', subtype: 'success', result: JSON.stringify(data) };
-    },
-  };
+/** Что «решает» агент в текущем тесте: данные, по которым мок query драйвит инструменты. */
+interface SimulatedAgentData {
+  summary: string;
+  actionItems: { text: string; assignee?: string }[];
+  decisions: DecisionItem[];
 }
+
+/** Мок хендлера MCP-инструмента (реальный хендлер из meeting-tool.ts). */
+type MockToolHandler = (args: Record<string, unknown>) => Promise<CallToolResult>;
 
 /** Фейковый SpeechTranscriber: возвращает заданный текст без реального Whisper. */
 class FakeTranscriber implements SpeechTranscriber {
@@ -61,6 +64,45 @@ describe('Tasks (e2e)', () => {
 
   const fakeTranscriber = new FakeTranscriber();
 
+  /** Параметры имитации агента — задаются в каждом тесте, потребляются моком query. */
+  const agent = {
+    data: null as SimulatedAgentData | null,
+  };
+
+  /**
+   * Мокаем query так, чтобы он имитировал агента: читает MCP-инструменты meeting-сервера
+   * из опций запроса и драйвит их по заданным данным — для каждого action item создаёт
+   * задачу (updateTask, source `insights`) и возвращает финальный JSON { summary, decisions }.
+   */
+  (mockedQuery as unknown as jest.Mock).mockImplementation(async function* (request: {
+    options?: {
+      mcpServers?: {
+        meeting?: { tools?: { name: string; handler: MockToolHandler }[] };
+      };
+    };
+  }) {
+    if (!agent.data) {
+      throw new Error('agent.data is not set');
+    }
+    const tools = request.options?.mcpServers?.meeting?.tools ?? [];
+    const updateTask = tools.find((tool) => tool.name === 'updateTask')?.handler;
+
+    for (const actionItem of agent.data.actionItems) {
+      await updateTask?.({
+        meetingId,
+        title: actionItem.text,
+        assignee: actionItem.assignee,
+        source: 'insights',
+      });
+    }
+
+    yield {
+      type: 'result',
+      subtype: 'success',
+      result: JSON.stringify({ summary: agent.data.summary, decisions: agent.data.decisions }),
+    };
+  });
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -82,6 +124,7 @@ describe('Tasks (e2e)', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    agent.data = null;
 
     await request(app.getHttpServer())
       .post('/auth/register')
@@ -243,16 +286,14 @@ describe('Tasks (e2e)', () => {
 
       const fileId = fileRes.body.id;
 
-      mockedQuery.mockReturnValue(
-        resultStream({
-          summary: 'Team discussed project timeline.',
-          actionItems: [
-            { text: 'Prepare presentation', assignee: 'Alice' },
-            { text: 'Send minutes' },
-          ],
-          decisions: [{ text: 'Launch in Q3' }],
-        }) as unknown as ReturnType<typeof query>,
-      );
+      agent.data = {
+        summary: 'Team discussed project timeline.',
+        actionItems: [
+          { text: 'Prepare presentation', assignee: 'Alice' },
+          { text: 'Send minutes' },
+        ],
+        decisions: [{ text: 'Launch in Q3' }],
+      };
 
       // Транскрибация запускает генерацию инсайтов автоматически
       await request(app.getHttpServer())
@@ -277,13 +318,11 @@ describe('Tasks (e2e)', () => {
       expect(tasksRes.body[1].title).toBe('Send minutes');
 
       // Регенерация: старая версия задач заменяется новой
-      mockedQuery.mockReturnValue(
-        resultStream({
-          summary: 'Second version summary',
-          actionItems: [{ text: 'Updated task' }],
-          decisions: [{ text: 'Decision 2' }],
-        }) as unknown as ReturnType<typeof query>,
-      );
+      agent.data = {
+        summary: 'Second version summary',
+        actionItems: [{ text: 'Updated task' }],
+        decisions: [{ text: 'Decision 2' }],
+      };
 
       const regenerateRes = await request(app.getHttpServer())
         .post(`/meetings/${meetingId}/files/${fileId}/insights/regenerate`)

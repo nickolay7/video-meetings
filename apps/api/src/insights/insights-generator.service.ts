@@ -13,8 +13,20 @@ export interface InsightData {
 }
 
 /**
+ * Финальный ответ агента: summary (дублируется из updateMeeting для блоба инсайтов)
+ * и decisions. Action items в ответе нет — они персистятся агентом через updateTask.
+ */
+interface ParsedAgentResult {
+  summary: string;
+  decisions: DecisionItem[];
+}
+
+/**
  * Сервис генерации инсайтов из текста транскрипции через Claude Agent SDK.
- * Формирует промпт, парсит JSON-ответ, сохраняет результат в репозиторий.
+ * Агент работает итеративно через MCP-инструменты встречи: для каждого action item
+ * ищет похожую задачу (findTask), обновляет или создаёт её (updateTask, source
+ * `insights`), затем пишет итоговый summary во встречу (updateMeeting). Финальный
+ * JSON-ответ содержит summary и decisions, которые сохраняются в репозиторий.
  *
  * Генерации сериализуются через очередь: одновременно выполняется не более одного
  * вызова Claude (CLI-процесс), даже если несколько транскрипций завершились разом.
@@ -111,9 +123,20 @@ export class InsightsGeneratorService {
     try {
       const result = await this.claudeAgentService.run(this.buildPrompt(transcriptionText), {
         systemPrompt:
-          'You are a meeting analysis assistant. Extract structured information from the meeting transcript. Always respond with valid JSON only, no other text.',
-        maxTurns: 1,
-        // MCP-сервер встречи: модель может вызвать findTask/updateTask/updateMeeting.
+          'You are a meeting analysis assistant. Analyze the meeting transcript and extract: ' +
+          '1) a concise summary (3-5 sentences) of what was discussed, key topics and conclusions; ' +
+          '2) action items — tasks or follow-ups mentioned, with the responsible person if specified; ' +
+          '3) decisions made during the meeting. ' +
+          'Persist the extracted results with the provided tools: for each action item call findTask ' +
+          'to search for a similar existing task of the meeting; if one exists, update it via updateTask ' +
+          'passing its taskId; otherwise create a new one via updateTask without a taskId and with ' +
+          'source "insights"; after all action items are handled, call updateMeeting to save the final ' +
+          'summary to the meeting. ' +
+          'Finally respond with a valid JSON object only (no other text): ' +
+          '{"summary": "the final summary", "decisions": [{"text": "decision"}]}',
+        maxTurns: 20,
+        // MCP-сервер встречи: агент итеративно вызывает findTask/updateTask/updateMeeting
+        // (см. systemPrompt), чтобы создать задачи и записать summary во встречу.
         mcpServers: { meeting: this.meetingMcpServer },
       });
       if (generation !== this.generation) {
@@ -124,8 +147,8 @@ export class InsightsGeneratorService {
       insights.status = 'completed';
       insights.summary = parsed.summary;
       insights.decisions = parsed.decisions;
-      // Action items выносим в самостоятельные записи Task (блоб больше не заполняем).
-      await this.tasksService.createInsightsTasks(meetingId, parsed.actionItems);
+      // Action items теперь создаются самим агентом через updateTask (source 'insights'),
+      // поэтому сервис задачи напрямую не создаёт.
       await this.insightsRepository.save(insights);
       this.logger.log(`Insights for file ${fileId} generated successfully`);
     } catch (error) {
@@ -140,24 +163,12 @@ export class InsightsGeneratorService {
   }
 
   private buildPrompt(transcriptionText: string): string {
-    return `Analyze the following meeting transcript and extract:
-
-1. **Summary** — a concise summary (3-5 sentences) of what was discussed, key topics, and conclusions.
-2. **Action items** — a list of tasks or follow-ups mentioned, with the person responsible if specified.
-3. **Decisions** — a list of decisions made during the meeting.
-
-Respond with a valid JSON object in the following format (no other text):
-{
-  "summary": "string",
-  "actionItems": [{ "text": "string", "assignee": "string (optional)" }],
-  "decisions": [{ "text": "string" }]
-}
-
-Transcript:
-${transcriptionText}`;
+    // Инструкции по анализу и работе с инструментами — в systemPrompt; сюда передаём
+    // только сам текст транскрипции.
+    return `Meeting transcript:\n${transcriptionText}`;
   }
 
-  private parseResult(result: string): InsightData {
+  private parseResult(result: string): ParsedAgentResult {
     // Ищем JSON-объект в ответе (на случай, если модель вернула текст до/после JSON)
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
@@ -175,18 +186,6 @@ ${transcriptionText}`;
       throw new Error('Failed to parse Claude response: summary is missing or not a string');
     }
 
-    const actionItems: ActionItem[] = [];
-    if (Array.isArray(parsed.actionItems)) {
-      for (const actionItem of parsed.actionItems) {
-        if (actionItem && typeof actionItem.text === 'string') {
-          actionItems.push({
-            text: actionItem.text,
-            assignee: typeof actionItem.assignee === 'string' ? actionItem.assignee : undefined,
-          });
-        }
-      }
-    }
-
     const decisions: DecisionItem[] = [];
     if (Array.isArray(parsed.decisions)) {
       for (const decision of parsed.decisions) {
@@ -196,6 +195,6 @@ ${transcriptionText}`;
       }
     }
 
-    return { summary: parsed.summary, actionItems, decisions };
+    return { summary: parsed.summary, decisions };
   }
 }
