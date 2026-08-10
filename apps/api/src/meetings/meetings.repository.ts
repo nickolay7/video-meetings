@@ -21,6 +21,12 @@ export class MeetingsRepository {
     return this.meetings.get(id);
   }
 
+  /** Обновляет summary встречи и возвращает обновлённую сущность. */
+  async updateSummary(meeting: Meeting, summary: string): Promise<Meeting> {
+    meeting.summary = summary;
+    return meeting;
+  }
+
   async clear(): Promise<void> {
     this.meetings.clear();
     this.idCounter = 1;

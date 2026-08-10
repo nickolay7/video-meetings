@@ -1,7 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeAgentService } from '../claude/claude.service';
 import { InsightsRepository } from './insights.repository';
 import { ActionItem, DecisionItem } from './meeting-insights.entity';
+import { TasksService } from '../tasks/tasks.service';
+import { MEETING_MCP_SERVER } from '../mcp/meeting-tool';
 
 export interface InsightData {
   summary: string;
@@ -28,6 +31,8 @@ export class InsightsGeneratorService {
   constructor(
     private readonly insightsRepository: InsightsRepository,
     private readonly claudeAgentService: ClaudeAgentService,
+    private readonly tasksService: TasksService,
+    @Inject(MEETING_MCP_SERVER) private readonly meetingMcpServer: McpServerConfig,
   ) {}
 
   /**
@@ -50,6 +55,9 @@ export class InsightsGeneratorService {
     insights.error = undefined;
     await this.insightsRepository.save(insights);
 
+    // Перегенерация заменяет старые задачи встречи, созданные из инсайтов, новыми.
+    await this.tasksService.removeInsightsTasks(meetingId);
+
     const generation = this.generation;
     this.queueTail = this.queueTail
       .then(() => this.runGeneration(fileId, meetingId, transcriptionText, generation))
@@ -63,6 +71,23 @@ export class InsightsGeneratorService {
     this.generation += 1;
     this.queueTail = Promise.resolve();
     await this.insightsRepository.clear();
+  }
+
+  /**
+   * Миграция: переносит legacy action items (хранились на записи инсайтов как «JSON-блоб»)
+   * в самостоятельные записи Task и очищает блоб. Идемпотентно — новые генерации пишут
+   * задачи напрямую и блоб не заполняют.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    const storedInsights = await this.insightsRepository.findAll();
+    for (const stored of storedInsights) {
+      if (stored.status === 'completed' && stored.actionItems && stored.actionItems.length > 0) {
+        await this.tasksService.removeInsightsTasks(stored.meetingId);
+        await this.tasksService.createInsightsTasks(stored.meetingId, stored.actionItems);
+        stored.actionItems = undefined;
+        await this.insightsRepository.save(stored);
+      }
+    }
   }
 
   private async runGeneration(
@@ -88,6 +113,8 @@ export class InsightsGeneratorService {
         systemPrompt:
           'You are a meeting analysis assistant. Extract structured information from the meeting transcript. Always respond with valid JSON only, no other text.',
         maxTurns: 1,
+        // MCP-сервер встречи: модель может вызвать findTask/updateTask/updateMeeting.
+        mcpServers: { meeting: this.meetingMcpServer },
       });
       if (generation !== this.generation) {
         return;
@@ -96,8 +123,9 @@ export class InsightsGeneratorService {
       const parsed = this.parseResult(result);
       insights.status = 'completed';
       insights.summary = parsed.summary;
-      insights.actionItems = parsed.actionItems;
       insights.decisions = parsed.decisions;
+      // Action items выносим в самостоятельные записи Task (блоб больше не заполняем).
+      await this.tasksService.createInsightsTasks(meetingId, parsed.actionItems);
       await this.insightsRepository.save(insights);
       this.logger.log(`Insights for file ${fileId} generated successfully`);
     } catch (error) {

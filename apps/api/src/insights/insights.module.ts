@@ -3,6 +3,8 @@ import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ClaudeModule } from '../claude/claude.module';
 import { FilesModule } from '../files/files.module';
+import { TasksModule } from '../tasks/tasks.module';
+import { McpModule } from '../mcp/mcp.module';
 import { InsightsController } from './insights.controller';
 import { InsightsGeneratorService } from './insights-generator.service';
 import { InsightsRepository } from './insights.repository';
@@ -14,6 +16,8 @@ import { InsightsRepository } from './insights.repository';
     }),
     FilesModule,
     ClaudeModule,
+    TasksModule,
+    McpModule,
   ],
   controllers: [InsightsController],
   providers: [JwtAuthGuard, InsightsGeneratorService, InsightsRepository],

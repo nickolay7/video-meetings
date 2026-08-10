@@ -9,6 +9,8 @@ import { ProfileModule } from './profile/profile.module';
 import { TranscriptionModule } from './transcription/transcription.module';
 import { ClaudeModule } from './claude/claude.module';
 import { InsightsModule } from './insights/insights.module';
+import { TasksModule } from './tasks/tasks.module';
+import { McpModule } from './mcp/mcp.module';
 
 @Module({
   imports: [
@@ -20,6 +22,8 @@ import { InsightsModule } from './insights/insights.module';
     TranscriptionModule,
     ClaudeModule,
     InsightsModule,
+    TasksModule,
+    McpModule,
   ],
   controllers: [AppController],
   providers: [AppService],

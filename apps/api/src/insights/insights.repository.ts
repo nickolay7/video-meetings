@@ -13,6 +13,10 @@ export class InsightsRepository {
     return this.insights.get(fileId);
   }
 
+  async findAll(): Promise<MeetingInsights[]> {
+    return [...this.insights.values()];
+  }
+
   async create(fileId: string, meetingId: string): Promise<MeetingInsights> {
     const insights = new MeetingInsights(fileId, meetingId, 'queued', new Date());
     this.insights.set(fileId, insights);

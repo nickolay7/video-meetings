@@ -8,6 +8,13 @@ import { UsersRepository } from '../src/users/users.repository';
 // который Jest (CJS) не может распарсить. Мокаем на уровне модуля.
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: jest.fn(),
+  tool: (name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+    name,
+    description,
+    inputSchema,
+    handler,
+  }),
+  createSdkMcpServer: (options: object) => ({ ...options }),
 }));
 
 describe('Authentication (e2e)', () => {

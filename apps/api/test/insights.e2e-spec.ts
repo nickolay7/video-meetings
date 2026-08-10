@@ -6,12 +6,20 @@ import { UsersRepository } from '../src/users/users.repository';
 import { MeetingsRepository } from '../src/meetings/meetings.repository';
 import { FilesRepository } from '../src/files/files.repository';
 import { InsightsRepository } from '../src/insights/insights.repository';
-import { ActionItem, DecisionItem } from '../src/insights/meeting-insights.entity';
+import { DecisionItem } from '../src/insights/meeting-insights.entity';
+import { TasksRepository } from '../src/tasks/tasks.repository';
 
 // ClaudeModule зарегистрирован в AppModule и тянет ESM-only SDK (@anthropic-ai/claude-agent-sdk),
 // который Jest (CJS) не может распарсить. Мокаем на уровне модуля.
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: jest.fn(),
+  tool: (name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+    name,
+    description,
+    inputSchema,
+    handler,
+  }),
+  createSdkMcpServer: (options: object) => ({ ...options }),
 }));
 
 describe('Insights (e2e)', () => {
@@ -20,6 +28,7 @@ describe('Insights (e2e)', () => {
   let meetingsRepository: MeetingsRepository;
   let filesRepository: FilesRepository;
   let insightsRepository: InsightsRepository;
+  let tasksRepository: TasksRepository;
 
   const password = 'password123';
   let token: string;
@@ -37,6 +46,7 @@ describe('Insights (e2e)', () => {
     meetingsRepository = moduleFixture.get<MeetingsRepository>(MeetingsRepository);
     filesRepository = moduleFixture.get<FilesRepository>(FilesRepository);
     insightsRepository = moduleFixture.get<InsightsRepository>(InsightsRepository);
+    tasksRepository = moduleFixture.get<TasksRepository>(TasksRepository);
     await app.init();
   });
 
@@ -77,6 +87,7 @@ describe('Insights (e2e)', () => {
     await meetingsRepository.clear();
     await filesRepository.clear();
     await insightsRepository.clear();
+    await tasksRepository.clear();
   });
 
   afterAll(async () => {
@@ -179,10 +190,6 @@ describe('Insights (e2e)', () => {
     });
 
     it('should return insights data when completed', async () => {
-      const actionItems: ActionItem[] = [
-        { text: 'Prepare presentation', assignee: 'Alice' },
-        { text: 'Send minutes' },
-      ];
       const decisions: DecisionItem[] = [
         { text: 'Launch date set to Q3' },
         { text: 'Budget approved' },
@@ -192,9 +199,12 @@ describe('Insights (e2e)', () => {
       const insights = await insightsRepository.findByFileId(fileId);
       insights!.status = 'completed';
       insights!.summary = 'Meeting discussed project timeline and budget allocation.';
-      insights!.actionItems = actionItems;
       insights!.decisions = decisions;
       await insightsRepository.save(insights!);
+
+      // Action items теперь живут как отдельные записи Task — источник для ответа инсайтов.
+      await tasksRepository.create(meetingId, 'Prepare presentation', 'insights', 'Alice');
+      await tasksRepository.create(meetingId, 'Send minutes', 'insights');
 
       const res = await request(app.getHttpServer())
         .get(`/meetings/${meetingId}/files/${fileId}/insights`)

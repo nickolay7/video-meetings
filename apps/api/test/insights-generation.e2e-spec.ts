@@ -7,6 +7,7 @@ import { MeetingsRepository } from '../src/meetings/meetings.repository';
 import { FilesRepository } from '../src/files/files.repository';
 import { TranscriptionService } from '../src/transcription/transcription.service';
 import { InsightsRepository } from '../src/insights/insights.repository';
+import { TasksRepository } from '../src/tasks/tasks.repository';
 import {
   SPEECH_TRANSCRIBER,
   SpeechTranscriber,
@@ -16,6 +17,13 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 // Мокаем Claude SDK — возвращаем валидный JSON с инсайтами
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: jest.fn(),
+  tool: (name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+    name,
+    description,
+    inputSchema,
+    handler,
+  }),
+  createSdkMcpServer: (options: object) => ({ ...options }),
 }));
 
 const mockedQuery = query as jest.MockedFunction<typeof query>;
@@ -51,6 +59,7 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
   let meetingsRepository: MeetingsRepository;
   let filesRepository: FilesRepository;
   let insightsRepository: InsightsRepository;
+  let tasksRepository: TasksRepository;
   let transcriptionService: TranscriptionService;
 
   const password = 'password123';
@@ -74,6 +83,7 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
     meetingsRepository = moduleFixture.get<MeetingsRepository>(MeetingsRepository);
     filesRepository = moduleFixture.get<FilesRepository>(FilesRepository);
     insightsRepository = moduleFixture.get<InsightsRepository>(InsightsRepository);
+    tasksRepository = moduleFixture.get<TasksRepository>(TasksRepository);
     transcriptionService = moduleFixture.get<TranscriptionService>(TranscriptionService);
     await app.init();
   });
@@ -115,6 +125,7 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
     await meetingsRepository.clear();
     await filesRepository.clear();
     await insightsRepository.clear();
+    await tasksRepository.clear();
     await transcriptionService.clear();
   });
 
@@ -242,6 +253,14 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
 
     expect(dataRes2.body.summary).toBe('Second version summary');
     expect(dataRes2.body.actionItems).toEqual([{ text: 'Task 2' }]);
+
+    // Самостоятельные задачи: после регенерации остаётся только новая версия
+    const tasksRes2 = await request(app.getHttpServer())
+      .get(`/meetings/${meetingId}/tasks`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(tasksRes2.body.map((task: { title: string }) => task.title)).toEqual(['Task 2']);
   }, 10000);
 
   describe('POST /meetings/:id/files/:fileId/insights/regenerate', () => {

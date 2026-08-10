@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import {
   getClaudeAuthToken,
   getClaudeBaseUrl,
@@ -14,6 +14,8 @@ export interface ClaudeQueryOptions {
   systemPrompt?: string;
   /** Максимальное число итераций агента (защита от бесконечного цикла). */
   maxTurns?: number;
+  /** MCP-серверы, доступные модели (передаются в `query().mcpServers`). */
+  mcpServers?: Record<string, McpServerConfig>;
 }
 
 /**
@@ -56,6 +58,7 @@ export class ClaudeAgentService {
           ...(getClaudeModel() ? { model: getClaudeModel() } : {}),
           ...(options.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
           ...(options.maxTurns ? { maxTurns: options.maxTurns } : {}),
+          ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
         },
       });
 

@@ -4,6 +4,7 @@ import { InsightData } from './insights-generator.service';
 import { InsightsRepository } from './insights.repository';
 import { InsightsStatus } from './meeting-insights.entity';
 import { FilesService } from '../files/files.service';
+import { TasksService } from '../tasks/tasks.service';
 
 export type InsightsStatusResponse = { status: InsightsStatus | 'none'; error?: string };
 
@@ -13,6 +14,7 @@ export class InsightsController {
   constructor(
     private readonly insightsRepository: InsightsRepository,
     private readonly filesService: FilesService,
+    private readonly tasksService: TasksService,
   ) {}
 
   @Get('insights/status')
@@ -38,9 +40,12 @@ export class InsightsController {
     if (!insights || insights.status !== 'completed') {
       throw new ConflictException('Insights are not ready yet');
     }
+    // Action items теперь живут как отдельные записи Task (источник истины),
+    // а в ответе инсайтов отдаются проекцией для обратной совместимости с фронтендом.
+    const tasks = await this.tasksService.listForMeeting(meetingId);
     return {
       summary: insights.summary ?? '',
-      actionItems: insights.actionItems ?? [],
+      actionItems: tasks.map((task) => ({ text: task.title, assignee: task.assignee })),
       decisions: insights.decisions ?? [],
     };
   }

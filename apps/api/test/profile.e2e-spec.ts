@@ -11,6 +11,13 @@ import { getAvatarsDir, MAX_AVATAR_SIZE } from '../src/profile/profile.constants
 // который Jest (CJS) не может распарсить. Мокаем на уровне модуля, как в claude.e2e-spec.ts.
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: jest.fn(),
+  tool: (name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+    name,
+    description,
+    inputSchema,
+    handler,
+  }),
+  createSdkMcpServer: (options: object) => ({ ...options }),
 }));
 
 describe('Profile (e2e)', () => {
