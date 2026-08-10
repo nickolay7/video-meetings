@@ -12,10 +12,18 @@ export interface InsightData {
 /**
  * Сервис генерации инсайтов из текста транскрипции через Claude Agent SDK.
  * Формирует промпт, парсит JSON-ответ, сохраняет результат в репозиторий.
+ *
+ * Генерации сериализуются через очередь: одновременно выполняется не более одного
+ * вызова Claude (CLI-процесс), даже если несколько транскрипций завершились разом.
  */
 @Injectable()
 export class InsightsGeneratorService {
   private readonly logger = new Logger(InsightsGeneratorService.name);
+
+  /** Хвост promise-цепочки очереди генерации: инсайты обрабатываются строго по одному. */
+  private queueTail: Promise<void> = Promise.resolve();
+  /** Поколение очереди: инкрементируется в `clear()`, чтобы завершить устаревшие джобы без записи. */
+  private generation = 0;
 
   constructor(
     private readonly insightsRepository: InsightsRepository,
@@ -23,23 +31,56 @@ export class InsightsGeneratorService {
   ) {}
 
   /**
-   * Генерирует инсайты для указанного файла из текста транскрипции.
-   * Статус проходит: queued → processing → completed/failed.
+   * Ставит генерацию инсайтов в очередь и возвращается сразу (вызывающий код опрашивает
+   * статус). Если для файла уже идёт генерация (queued/processing) — повторный запуск
+   * пропускается, чтобы не запускать второй CLI-процесс.
    */
   async generate(fileId: string, meetingId: string, transcriptionText: string): Promise<void> {
-    let insights = await this.insightsRepository.findByFileId(fileId);
+    const existing = await this.insightsRepository.findByFileId(fileId);
+    if (existing && (existing.status === 'queued' || existing.status === 'processing')) {
+      this.logger.warn(`Insights for file ${fileId} already in progress — skipping`);
+      return;
+    }
+
+    const insights = existing ?? (await this.insightsRepository.create(fileId, meetingId));
+    insights.status = 'queued';
+    insights.summary = undefined;
+    insights.actionItems = undefined;
+    insights.decisions = undefined;
+    insights.error = undefined;
+    await this.insightsRepository.save(insights);
+
+    const generation = this.generation;
+    this.queueTail = this.queueTail
+      .then(() => this.runGeneration(fileId, meetingId, transcriptionText, generation))
+      .catch((error: unknown) => {
+        this.logger.error(`Insights job for file ${fileId} crashed: ${String(error)}`);
+      });
+  }
+
+  /** Сбрасывает очередь и метаданные инсайтов (используется e2e-тестами). */
+  async clear(): Promise<void> {
+    this.generation += 1;
+    this.queueTail = Promise.resolve();
+    await this.insightsRepository.clear();
+  }
+
+  private async runGeneration(
+    fileId: string,
+    meetingId: string,
+    transcriptionText: string,
+    generation: number,
+  ): Promise<void> {
+    if (generation !== this.generation) {
+      return;
+    }
+    const insights = await this.insightsRepository.findByFileId(fileId);
     if (!insights) {
-      insights = await this.insightsRepository.create(fileId, meetingId);
-    } else {
-      insights.status = 'queued';
-      insights.summary = undefined;
-      insights.actionItems = undefined;
-      insights.decisions = undefined;
-      insights.error = undefined;
-      await this.insightsRepository.save(insights);
+      return;
     }
 
     insights.status = 'processing';
+    insights.error = undefined;
     await this.insightsRepository.save(insights);
 
     try {
@@ -48,6 +89,9 @@ export class InsightsGeneratorService {
           'You are a meeting analysis assistant. Extract structured information from the meeting transcript. Always respond with valid JSON only, no other text.',
         maxTurns: 1,
       });
+      if (generation !== this.generation) {
+        return;
+      }
 
       const parsed = this.parseResult(result);
       insights.status = 'completed';
@@ -57,6 +101,9 @@ export class InsightsGeneratorService {
       await this.insightsRepository.save(insights);
       this.logger.log(`Insights for file ${fileId} generated successfully`);
     } catch (error) {
+      if (generation !== this.generation) {
+        return;
+      }
       insights.status = 'failed';
       insights.error = error instanceof Error ? error.message : String(error);
       await this.insightsRepository.save(insights);
@@ -102,11 +149,11 @@ ${transcriptionText}`;
 
     const actionItems: ActionItem[] = [];
     if (Array.isArray(parsed.actionItems)) {
-      for (const item of parsed.actionItems) {
-        if (item && typeof item.text === 'string') {
+      for (const actionItem of parsed.actionItems) {
+        if (actionItem && typeof actionItem.text === 'string') {
           actionItems.push({
-            text: item.text,
-            assignee: typeof item.assignee === 'string' ? item.assignee : undefined,
+            text: actionItem.text,
+            assignee: typeof actionItem.assignee === 'string' ? actionItem.assignee : undefined,
           });
         }
       }
@@ -114,9 +161,9 @@ ${transcriptionText}`;
 
     const decisions: DecisionItem[] = [];
     if (Array.isArray(parsed.decisions)) {
-      for (const item of parsed.decisions) {
-        if (item && typeof item.text === 'string') {
-          decisions.push({ text: item.text });
+      for (const decision of parsed.decisions) {
+        if (decision && typeof decision.text === 'string') {
+          decisions.push({ text: decision.text });
         }
       }
     }

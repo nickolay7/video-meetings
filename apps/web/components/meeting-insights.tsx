@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card, Chip, ScrollShadow, Spinner } from '@heroui/react';
+import { Button, Spinner } from '@heroui/react';
 import { InsightsData, InsightsStatus } from '../lib/transcription';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
@@ -17,6 +17,10 @@ interface MeetingFile {
 /**
  * Блок «Инсайты встречи» в карточке встречи.
  * Показывает summary, action items и decisions после завершения генерации.
+ *
+ * Опрос ведётся только пока есть реальная работа: генерация в процессе (queued/
+ * processing), либо идёт транскрибация, по завершении которой генерация начнётся
+ * автоматически. Терминальные состояния (completed/failed/нечего ждать) останавливают опрос.
  */
 export function MeetingInsights({ meetingId }: { meetingId: string }) {
   const router = useRouter();
@@ -26,6 +30,8 @@ export function MeetingInsights({ meetingId }: { meetingId: string }) {
   const [isLoading, setIsLoading] = useState(true);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeRef = useRef(true);
+  /** fileId файла с неудавшейся генерацией — цель кнопки «Повторить». */
+  const failedFileIdRef = useRef<string | null>(null);
 
   const getToken = useCallback((): string | null => {
     return localStorage.getItem('access_token');
@@ -36,67 +42,23 @@ export function MeetingInsights({ meetingId }: { meetingId: string }) {
     router.push('/login');
   }, [router]);
 
-  /** Ищет файл с завершёнными инсайтами в списке файлов встречи. */
-  const findInsightsFile = useCallback(async (): Promise<string | null> => {
-    const token = getToken();
-    if (!token) {
-      handleUnauthorized();
-      return null;
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
     }
+  }, []);
 
-    try {
-      const filesRes = await fetch(`${API_URL}/meetings/${meetingId}/files`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (filesRes.status === 401) {
-        handleUnauthorized();
-        return null;
-      }
-      if (!filesRes.ok) {
-        return null;
-      }
-
-      const files: MeetingFile[] = await filesRes.json();
-      for (const file of files) {
-        const statusRes = await fetch(
-          `${API_URL}/meetings/${meetingId}/files/${file.id}/insights/status`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
-        if (statusRes.status === 401) {
-          handleUnauthorized();
-          return null;
-        }
-        if (statusRes.ok) {
-          const data: { status: string; error?: string } = await statusRes.json();
-          if (data.status === 'completed') {
-            return file.id;
-          }
-          if (
-            data.status === 'queued' ||
-            data.status === 'processing' ||
-            data.status === 'failed'
-          ) {
-            setStatus(data.status);
-            if (data.status === 'failed' && data.error) {
-              setError(data.error);
-            }
-          }
-        }
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }, [meetingId, getToken, handleUnauthorized]);
-
-  /** Загружает данные инсайтов для указанного файла. */
+  /**
+   * Загружает данные инсайтов для указанного файла. Возвращает успех: при неудаче
+   * вызывающий код продолжает опрос, чтобы повторить загрузку.
+   */
   const loadInsights = useCallback(
-    async (fileId: string) => {
+    async (fileId: string): Promise<boolean> => {
       const token = getToken();
       if (!token) {
         handleUnauthorized();
-        return;
+        return false;
       }
 
       try {
@@ -106,7 +68,7 @@ export function MeetingInsights({ meetingId }: { meetingId: string }) {
 
         if (res.status === 401) {
           handleUnauthorized();
-          return;
+          return false;
         }
         if (res.ok) {
           const data: InsightsData = await res.json();
@@ -114,16 +76,122 @@ export function MeetingInsights({ meetingId }: { meetingId: string }) {
           setStatus('completed');
           setError(null);
           setIsLoading(false);
+          return true;
         }
       } catch {
-        // silent
+        // Транзиентная ошибка сети — вернём false, инициатор продолжит опрос
       }
+      setIsLoading(false);
+      return false;
     },
     [meetingId, getToken, handleUnauthorized],
   );
 
-  /** Проверяет статус инсайтов для всех файлов встречи. */
-  const checkStatus = useCallback(async () => {
+  /**
+   * Проверяет статусы инсайтов всех файлов встречи и обновляет состояние.
+   * Возвращает `true`, если опрос стоит продолжать: идёт генерация, либо файл
+   * завершён, но данные ещё не загрузились (повторная попытка), либо транскрибация
+   * в работе и инсайты появятся позже.
+   */
+  const checkStatus = useCallback(async (): Promise<boolean> => {
+    const token = getToken();
+    if (!token) {
+      handleUnauthorized();
+      return false;
+    }
+
+    let files: MeetingFile[];
+    try {
+      const filesRes = await fetch(`${API_URL}/meetings/${meetingId}/files`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (filesRes.status === 401) {
+        handleUnauthorized();
+        return false;
+      }
+      if (!filesRes.ok) {
+        return false;
+      }
+      files = await filesRes.json();
+    } catch {
+      // Транзиентная ошибка сети: продолжаем опрос, только если он уже идёт, —
+      // при инициализации по ошибке опрос не начинаем (иначе вечный поллинг без работы).
+      return pollIntervalRef.current !== null;
+    }
+
+    let hasActive = false;
+    let hasFailed = false;
+    let failedError: string | null = null;
+
+    for (const file of files) {
+      const insightsRes = await fetch(
+        `${API_URL}/meetings/${meetingId}/files/${file.id}/insights/status`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (insightsRes.status === 401) {
+        handleUnauthorized();
+        return false;
+      }
+      if (!insightsRes.ok) {
+        continue;
+      }
+
+      const insightsData: { status: string; error?: string } = await insightsRes.json();
+
+      if (insightsData.status === 'completed') {
+        // Инсайты готовы — загружаем данные. Продолжаем опрос, если загрузка не удалась.
+        const loaded = await loadInsights(file.id);
+        return !loaded;
+      }
+      if (insightsData.status === 'queued' || insightsData.status === 'processing') {
+        hasActive = true;
+        setStatus(insightsData.status);
+        setError(null);
+        continue;
+      }
+      if (insightsData.status === 'failed') {
+        hasFailed = true;
+        failedFileIdRef.current = file.id;
+        failedError = insightsData.error ?? null;
+        continue;
+      }
+
+      // Статус 'none' — инсайты ещё не запущены. Опрос оправдан, только если файл
+      // транскрибируется или уже оттранскрибирован: по завершении генерация начнётся.
+      const transcriptionRes = await fetch(
+        `${API_URL}/meetings/${meetingId}/files/${file.id}/transcription/status`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (transcriptionRes.ok) {
+        const transcriptionData: { status: string } = await transcriptionRes.json();
+        if (
+          transcriptionData.status === 'queued' ||
+          transcriptionData.status === 'processing' ||
+          transcriptionData.status === 'completed'
+        ) {
+          hasActive = true;
+        }
+      }
+    }
+
+    if (hasActive) {
+      return true;
+    }
+    if (hasFailed) {
+      setStatus('failed');
+      setError(failedError ?? 'Не удалось сгенерировать инсайты');
+      return false;
+    }
+    // Нечего ждать — останавливаем опрос.
+    return false;
+  }, [meetingId, getToken, handleUnauthorized, loadInsights]);
+
+  /** Перезапускает генерацию инсайтов для файла, упавшего в failed. */
+  const retryGeneration = useCallback(async () => {
+    const fileId = failedFileIdRef.current;
+    if (!fileId) {
+      return;
+    }
     const token = getToken();
     if (!token) {
       handleUnauthorized();
@@ -131,79 +199,50 @@ export function MeetingInsights({ meetingId }: { meetingId: string }) {
     }
 
     try {
-      const filesRes = await fetch(`${API_URL}/meetings/${meetingId}/files`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (filesRes.status === 401) {
+      const res = await fetch(
+        `${API_URL}/meetings/${meetingId}/files/${fileId}/insights/regenerate`,
+        { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (res.status === 401) {
         handleUnauthorized();
         return;
       }
-      if (!filesRes.ok) {
-        return;
-      }
-
-      const files: MeetingFile[] = await filesRes.json();
-      for (const file of files) {
-        const statusRes = await fetch(
-          `${API_URL}/meetings/${meetingId}/files/${file.id}/insights/status`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
-        if (statusRes.status === 401) {
-          handleUnauthorized();
-          return;
-        }
-        if (statusRes.ok) {
-          const data: { status: string; error?: string } = await statusRes.json();
-          if (data.status === 'completed') {
-            // Инсайты готовы — загружаем данные и останавливаем опрос
-            await loadInsights(file.id);
-            if (pollIntervalRef.current) {
-              clearInterval(pollIntervalRef.current);
-              pollIntervalRef.current = null;
-            }
-            return;
-          }
-          if (data.status === 'queued' || data.status === 'processing') {
-            setStatus(data.status);
-            setError(null);
-            return;
-          }
-          if (data.status === 'failed') {
-            setStatus('failed');
-            setError(data.error ?? 'Ошибка генерации инсайтов');
-            if (pollIntervalRef.current) {
-              clearInterval(pollIntervalRef.current);
-              pollIntervalRef.current = null;
-            }
-            return;
-          }
+      if (res.ok) {
+        setStatus('queued');
+        setError(null);
+        setIsLoading(false);
+        if (!pollIntervalRef.current) {
+          pollIntervalRef.current = setInterval(() => {
+            void checkStatus().then((continuePolling) => {
+              if (!continuePolling) {
+                stopPolling();
+              }
+            });
+          }, INSIGHTS_POLL_INTERVAL_MS);
         }
       }
     } catch {
-      // silent
+      // Тихо: следующий опрос/повторный клик подхватит актуальный статус
     }
-  }, [meetingId, getToken, handleUnauthorized, loadInsights]);
+  }, [meetingId, getToken, handleUnauthorized, checkStatus, stopPolling]);
 
   useEffect(() => {
     activeRef.current = true;
 
     async function init() {
-      const fileId = await findInsightsFile();
+      setIsLoading(false);
+      const shouldPoll = await checkStatus();
       if (!activeRef.current) {
         return;
       }
-
-      if (fileId) {
-        await loadInsights(fileId);
-      } else if (status === 'queued' || status === 'processing' || status === 'none') {
-        // Если есть файлы с не-терминальным статусом — начинаем опрос
-        setIsLoading(false);
+      if (shouldPoll && !pollIntervalRef.current) {
         pollIntervalRef.current = setInterval(() => {
-          void checkStatus();
+          void checkStatus().then((continuePolling) => {
+            if (!continuePolling) {
+              stopPolling();
+            }
+          });
         }, INSIGHTS_POLL_INTERVAL_MS);
-      } else {
-        setIsLoading(false);
       }
     }
 
@@ -211,13 +250,9 @@ export function MeetingInsights({ meetingId }: { meetingId: string }) {
 
     return () => {
       activeRef.current = false;
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
+      stopPolling();
     };
-    // Только при монтировании
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Только при монтировании: правило exhaustive-deps в конфиге репозитория не подключено
   }, []);
 
   // Не показываем ничего, если нет данных и не в процессе
@@ -242,6 +277,9 @@ export function MeetingInsights({ meetingId }: { meetingId: string }) {
     return (
       <div className="bg-danger/10 mt-3 rounded-lg px-3 py-2">
         <p className="text-danger text-sm">{error ?? 'Не удалось сгенерировать инсайты'}</p>
+        <Button size="sm" variant="outline" onPress={() => void retryGeneration()} className="mt-2">
+          Повторить
+        </Button>
       </div>
     );
   }

@@ -83,11 +83,27 @@ export class TranscriptionService {
     return { text: transcription.text ?? '' };
   }
 
-  /** Сбрасывает очередь и метаданные транскрибаций (используется e2e-тестами). */
+  /**
+   * Повторно генерирует инсайты для файла с уже готовой транскрипцией
+   * (например, после статуса failed). Текст берётся из готовой транскрипции —
+   * повторно Whisper не запускается.
+   */
+  async regenerateInsights(meetingId: string, fileId: string): Promise<{ status: 'queued' }> {
+    await this.filesService.findForMeeting(meetingId, fileId);
+    const transcription = await this.transcriptionRepository.findByFileId(fileId);
+    if (!transcription || transcription.status !== 'completed') {
+      throw new ConflictException('Transcription is not completed yet');
+    }
+    await this.insightsGeneratorService.generate(fileId, meetingId, transcription.text ?? '');
+    return { status: 'queued' };
+  }
+
+  /** Сбрасывает очередь и метаданные транскрибаций и инсайтов (используется e2e-тестами). */
   async clear(): Promise<void> {
     this.generation += 1;
     this.queueTail = Promise.resolve();
     await this.transcriptionRepository.clear();
+    await this.insightsGeneratorService.clear();
   }
 
   private async processJob(fileId: string, filePath: string, generation: number): Promise<void> {

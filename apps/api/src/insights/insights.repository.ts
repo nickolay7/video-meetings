@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { MeetingInsights, InsightsStatus } from './meeting-insights.entity';
+import { MeetingInsights } from './meeting-insights.entity';
 
 /**
  * In-memory хранилище метаданных инсайтов: одна запись на файл,

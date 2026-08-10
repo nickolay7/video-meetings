@@ -5,7 +5,6 @@ import { ClaudeModule } from '../claude/claude.module';
 import { FilesModule } from '../files/files.module';
 import { InsightsController } from './insights.controller';
 import { InsightsGeneratorService } from './insights-generator.service';
-import { InsightsService } from './insights.service';
 import { InsightsRepository } from './insights.repository';
 
 @Module({
@@ -17,7 +16,7 @@ import { InsightsRepository } from './insights.repository';
     ClaudeModule,
   ],
   controllers: [InsightsController],
-  providers: [JwtAuthGuard, InsightsGeneratorService, InsightsService, InsightsRepository],
-  exports: [InsightsGeneratorService, InsightsService, InsightsRepository],
+  providers: [JwtAuthGuard, InsightsGeneratorService, InsightsRepository],
+  exports: [InsightsGeneratorService, InsightsRepository],
 })
 export class InsightsModule {}

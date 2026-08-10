@@ -1,8 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
-import { rm } from 'fs/promises';
-import * as path from 'path';
 import { AppModule } from '../src/app.module';
 import { UsersRepository } from '../src/users/users.repository';
 import { MeetingsRepository } from '../src/meetings/meetings.repository';
@@ -13,7 +11,6 @@ import {
   SPEECH_TRANSCRIBER,
   SpeechTranscriber,
 } from '../src/transcription/speech-transcriber.interface';
-import { getUploadsDir } from '../src/files/files.constants';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 // Мокаем Claude SDK — возвращаем валидный JSON с инсайтами
@@ -246,4 +243,84 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
     expect(dataRes2.body.summary).toBe('Second version summary');
     expect(dataRes2.body.actionItems).toEqual([{ text: 'Task 2' }]);
   }, 10000);
+
+  describe('POST /meetings/:id/files/:fileId/insights/regenerate', () => {
+    it('should reject a request without a token (401)', async () => {
+      return request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/files/${fileId}/insights/regenerate`)
+        .expect(401);
+    });
+
+    it('should return 409 when the transcription is not completed yet', async () => {
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/files/${fileId}/insights/regenerate`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+    });
+
+    it('should return 404 for a non-existent file', async () => {
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/files/nonexistent/insights/regenerate`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+    });
+
+    it('should regenerate insights from a completed transcription after a failure', async () => {
+      // Первая генерация падает (например, Claude недоступен)
+      mockedQuery.mockReturnValueOnce(
+        errorStream(['Claude API error']) as unknown as ReturnType<typeof query>,
+      );
+      // Повторная генерация успешна
+      mockedQuery.mockReturnValueOnce(
+        resultStream({
+          summary: 'Regenerated summary',
+          actionItems: [{ text: 'Regenerated task', assignee: 'Bob' }],
+          decisions: [{ text: 'Regenerated decision' }],
+        }) as unknown as ReturnType<typeof query>,
+      );
+
+      // Транскрибация запускает первую (неудачную) генерацию
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/files/${fileId}/transcribe`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      let statusRes = await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/files/${fileId}/insights/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(statusRes.body.status).toBe('failed');
+
+      // Повторяем генерацию из готовой транскрипции (Whisper не перезапускается)
+      const retryRes = await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/files/${fileId}/insights/regenerate`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      expect(retryRes.body).toEqual({ status: 'queued' });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      statusRes = await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/files/${fileId}/insights/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(statusRes.body.status).toBe('completed');
+
+      const dataRes = await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/files/${fileId}/insights`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(dataRes.body).toEqual({
+        summary: 'Regenerated summary',
+        actionItems: [{ text: 'Regenerated task', assignee: 'Bob' }],
+        decisions: [{ text: 'Regenerated decision' }],
+      });
+    }, 10000);
+  });
 });

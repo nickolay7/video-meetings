@@ -26,6 +26,14 @@ export class TranscriptionController {
     return this.transcriptionService.getStatus(meetingId, fileId);
   }
 
+  @Post('insights/regenerate')
+  async regenerateInsights(
+    @Param('id') meetingId: string,
+    @Param('fileId') fileId: string,
+  ): Promise<{ status: 'queued' }> {
+    return this.transcriptionService.regenerateInsights(meetingId, fileId);
+  }
+
   @Get('transcription')
   async getText(
     @Param('id') meetingId: string,

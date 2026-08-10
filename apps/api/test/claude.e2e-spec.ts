@@ -89,6 +89,8 @@ describe('ClaudeAgentService (SDK mocked)', () => {
     mockedQuery.mockImplementation(
       (params) =>
         ({
+          // Намеренный блокирующий генератор без yield: поток заканчивается только по abort.
+          // eslint-disable-next-line require-yield
           async *[Symbol.asyncIterator]() {
             await new Promise<void>((_resolve, reject) => {
               params.options?.abortController?.signal.addEventListener('abort', () =>

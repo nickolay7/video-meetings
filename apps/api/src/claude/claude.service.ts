@@ -39,24 +39,26 @@ export class ClaudeAgentService {
     const abortController = new AbortController();
     const timer = setTimeout(() => abortController.abort(), timeoutMs);
 
-    const result = query({
-      prompt,
-      options: {
-        abortController,
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          ANTHROPIC_BASE_URL: getClaudeBaseUrl(),
-          ANTHROPIC_AUTH_TOKEN: getClaudeAuthToken(),
-        },
-        permissionMode: getClaudePermissionMode(),
-        ...(getClaudeModel() ? { model: getClaudeModel() } : {}),
-        ...(options.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
-        ...(options.maxTurns ? { maxTurns: options.maxTurns } : {}),
-      },
-    });
-
+    // query() вызывается внутри try, чтобы синхронный выброс (например, валидация
+    // опций SDK) не обошёл finally и не оставил таймер незачищенным.
     try {
+      const result = query({
+        prompt,
+        options: {
+          abortController,
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            ANTHROPIC_BASE_URL: getClaudeBaseUrl(),
+            ANTHROPIC_AUTH_TOKEN: getClaudeAuthToken(),
+          },
+          permissionMode: getClaudePermissionMode(),
+          ...(getClaudeModel() ? { model: getClaudeModel() } : {}),
+          ...(options.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
+          ...(options.maxTurns ? { maxTurns: options.maxTurns } : {}),
+        },
+      });
+
       for await (const message of result) {
         if (message.type !== 'result') continue;
         if (message.subtype === 'success') {
