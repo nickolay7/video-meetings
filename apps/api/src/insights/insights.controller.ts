@@ -1,6 +1,6 @@
 import { Controller, Get, Param, UseGuards, ConflictException } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { InsightData } from './insights.service';
+import { InsightData } from './insights-generator.service';
 import { InsightsRepository } from './insights.repository';
 import { InsightsStatus } from './meeting-insights.entity';
 import { FilesService } from '../files/files.service';

@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ClaudeModule } from '../claude/claude.module';
 import { FilesModule } from '../files/files.module';
 import { InsightsController } from './insights.controller';
+import { InsightsGeneratorService } from './insights-generator.service';
 import { InsightsService } from './insights.service';
 import { InsightsRepository } from './insights.repository';
 
@@ -12,9 +14,10 @@ import { InsightsRepository } from './insights.repository';
       secret: process.env.JWT_SECRET || 'default-secret-key',
     }),
     FilesModule,
+    ClaudeModule,
   ],
   controllers: [InsightsController],
-  providers: [JwtAuthGuard, InsightsService, InsightsRepository],
-  exports: [InsightsService, InsightsRepository],
+  providers: [JwtAuthGuard, InsightsGeneratorService, InsightsService, InsightsRepository],
+  exports: [InsightsGeneratorService, InsightsService, InsightsRepository],
 })
 export class InsightsModule {}
