@@ -8,6 +8,7 @@ import { FilesModule } from './files/files.module';
 import { ProfileModule } from './profile/profile.module';
 import { TranscriptionModule } from './transcription/transcription.module';
 import { ClaudeModule } from './claude/claude.module';
+import { InsightsModule } from './insights/insights.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ClaudeModule } from './claude/claude.module';
     ProfileModule,
     TranscriptionModule,
     ClaudeModule,
+    InsightsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
