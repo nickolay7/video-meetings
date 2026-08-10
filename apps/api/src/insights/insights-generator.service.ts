@@ -4,6 +4,7 @@ import { InsightsRepository } from './insights.repository';
 import { ActionItem, DecisionItem } from './meeting-insights.entity';
 import { TasksService } from '../tasks/tasks.service';
 import { MEETING_MCP_SERVER_FACTORY, type MeetingMcpServerFactory } from '../mcp/meeting-tool';
+import { buildMeetingHooks } from './hooks';
 
 export interface InsightData {
   summary: string;
@@ -146,6 +147,8 @@ export class InsightsGeneratorService {
         // (защита от prompt injection). Агент итеративно вызывает findTask/updateTask/updateMeeting
         // (см. systemPrompt), чтобы создать задачи и записать summary во встречу.
         mcpServers: { meeting: this.createMeetingMcpServer(meetingId) },
+        // Хуки: pre-to-use guard (валидация), call budget (лимит вызовов), audit log (журналирование)
+        hooks: buildMeetingHooks(this.logger),
       });
       if (generation !== this.generation) {
         return;
