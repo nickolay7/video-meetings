@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 // Креды поднимаются из корневого `.env` ДО оценки skip-условия.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
+dotenv.config({ path: path.resolve(__dirname, '..', '..', '..', '.env') });
 
 const hasClaudeCredentials = Boolean(
   process.env.ANTHROPIC_BASE_URL && process.env.ANTHROPIC_AUTH_TOKEN,
