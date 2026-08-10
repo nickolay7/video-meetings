@@ -36,3 +36,4 @@ apps/api/uploads
 .idea
 .vscode/*
 !.vscode/extensions.json
+.claude/settings.local.json
