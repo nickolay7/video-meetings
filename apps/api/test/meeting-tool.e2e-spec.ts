@@ -2,11 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { McpModule } from '../src/mcp/mcp.module';
 import {
-  MEETING_MCP_SERVER,
+  MEETING_MCP_SERVER_FACTORY,
   createMeetingMcpServer,
   findTaskTool,
   updateMeetingTool,
   updateTaskTool,
+  type MeetingMcpServerFactory,
 } from '../src/mcp/meeting-tool';
 import { MeetingsRepository } from '../src/meetings/meetings.repository';
 import { TasksRepository } from '../src/tasks/tasks.repository';
@@ -64,7 +65,7 @@ interface MeetingJson {
 
 interface MeetingMcpServer {
   name: string;
-  tools: { name: string }[];
+  tools: { name: string; inputSchema?: Record<string, unknown> }[];
 }
 
 describe('Meeting MCP tools', () => {
@@ -276,16 +277,94 @@ describe('Meeting MCP tools', () => {
     });
   });
 
+  describe('scoped tools (bound to a meeting) — защита от prompt injection', () => {
+    it('exposes no meetingId in the schemas of a scoped server', () => {
+      const server = createMeetingMcpServer(deps(), {
+        meetingId: 'meeting-1',
+      }) as unknown as MeetingMcpServer;
+
+      expect(server.tools.map((tool) => tool.name)).toEqual([
+        'findTask',
+        'updateTask',
+        'updateMeeting',
+      ]);
+      // Модель не может указать встречу: meetingId убран из схем — его нельзя подменить из транскрипта.
+      for (const tool of server.tools) {
+        expect(tool.inputSchema).not.toHaveProperty('meetingId');
+      }
+    });
+
+    it('findTask ignores an injected meetingId and returns only the bound meeting tasks', async () => {
+      const bound = await createMeeting('Bound');
+      const other = await createMeeting('Other');
+      await createTask(bound.id, 'Bound task');
+      await createTask(other.id, 'Other task');
+
+      const result = await callTool(findTaskTool(deps(), bound.id), {
+        meetingId: other.id, // «инъекция» из транскрипта — должна игнорироваться
+      });
+
+      const tasks = resultText(result) as TaskJson[];
+      expect(tasks.map((task) => task.title)).toEqual(['Bound task']);
+    });
+
+    it('updateTask creates the task in the bound meeting despite an injected meetingId', async () => {
+      const bound = await createMeeting('Bound');
+      const other = await createMeeting('Other');
+
+      const result = await callTool(updateTaskTool(deps(), bound.id), {
+        meetingId: other.id,
+        title: 'Scoped task',
+        source: 'insights',
+      });
+
+      const task = resultText(result) as TaskJson;
+      expect(task.meetingId).toBe(bound.id);
+
+      const boundTasks = await tasksRepository.findAllByMeeting(bound.id);
+      expect(boundTasks.map((task) => task.title)).toEqual(['Scoped task']);
+      const otherTasks = await tasksRepository.findAllByMeeting(other.id);
+      expect(otherTasks).toEqual([]);
+    });
+
+    it('updateMeeting writes the summary to the bound meeting despite an injected meetingId', async () => {
+      const bound = await createMeeting('Bound');
+      const other = await createMeeting('Other');
+
+      const result = await callTool(updateMeetingTool(deps(), bound.id), {
+        meetingId: other.id,
+        summary: 'Bound summary',
+      });
+
+      const updated = resultText(result) as MeetingJson;
+      expect(updated.id).toBe(bound.id);
+
+      const boundMeeting = await meetingsRepository.findById(bound.id);
+      expect(boundMeeting?.summary).toBe('Bound summary');
+      const otherMeeting = await meetingsRepository.findById(other.id);
+      expect(otherMeeting?.summary).toBeUndefined();
+    });
+  });
+
   describe('McpModule', () => {
-    it('resolves the MEETING_MCP_SERVER provider', async () => {
+    it('provides a factory that builds a meeting server scoped to the given meeting', async () => {
       const moduleFixture: TestingModule = await Test.createTestingModule({
         imports: [McpModule],
       }).compile();
 
-      const server = moduleFixture.get<MeetingMcpServer>(MEETING_MCP_SERVER);
+      const factory = moduleFixture.get<MeetingMcpServerFactory>(MEETING_MCP_SERVER_FACTORY);
+      const server = factory('meeting-1') as unknown as MeetingMcpServer;
 
       expect(server.name).toBe('meeting');
-      expect(server.tools).toHaveLength(3);
+      expect(server.tools.map((tool) => tool.name)).toEqual([
+        'findTask',
+        'updateTask',
+        'updateMeeting',
+      ]);
+      // Скопированный сервер не отдаёт модели meetingId — его нельзя подменить из транскрипта.
+      for (const tool of server.tools) {
+        expect(tool.inputSchema).not.toHaveProperty('meetingId');
+      }
     });
   });
 });

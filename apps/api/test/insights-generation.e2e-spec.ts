@@ -67,6 +67,8 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
   const agent = {
     data: null as SimulatedAgentData | null,
     shouldFail: false,
+    /** Чужой meetingId, который агент «подсунул» бы инструментам под влиянием транскрипта. */
+    attackerMeetingId: null as string | null,
   };
 
   /**
@@ -93,15 +95,17 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
     const updateTask = tools.find((tool) => tool.name === 'updateTask')?.handler;
     const updateMeeting = tools.find((tool) => tool.name === 'updateMeeting')?.handler;
 
+    // Скопированный сервер сам знает свою встречу: если «транскрипт» пытается подменить
+    // meetingId (agent.attackerMeetingId), инструменты всё равно работают с реальной встречей.
+    const toolArgs = (attrs: Record<string, unknown>) =>
+      agent.attackerMeetingId ? { meetingId: agent.attackerMeetingId, ...attrs } : attrs;
+
     for (const actionItem of agent.data.actionItems) {
-      await updateTask?.({
-        meetingId,
-        title: actionItem.text,
-        assignee: actionItem.assignee,
-        source: 'insights',
-      });
+      await updateTask?.(
+        toolArgs({ title: actionItem.text, assignee: actionItem.assignee, source: 'insights' }),
+      );
     }
-    await updateMeeting?.({ meetingId, summary: agent.data.summary });
+    await updateMeeting?.(toolArgs({ summary: agent.data.summary }));
 
     yield {
       type: 'result',
@@ -133,6 +137,7 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
     jest.clearAllMocks();
     agent.data = null;
     agent.shouldFail = false;
+    agent.attackerMeetingId = null;
 
     await request(app.getHttpServer())
       .post('/auth/register')
@@ -214,6 +219,52 @@ describe('Insights generation (e2e) — integration with TranscriptionService', 
     // Агент записал summary во встречу через updateMeeting.
     const storedMeeting = await meetingsRepository.findById(meetingId);
     expect(storedMeeting?.summary).toBe('Team discussed project timeline and budget.');
+  }, 10000);
+
+  it('should scope all tools to the current meeting, ignoring a meetingId injected by the transcript', async () => {
+    // «Чужая» встреча: если бы транскрипт смог переключить агента, данные ушли бы сюда.
+    const otherRes = await request(app.getHttpServer())
+      .post('/meetings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Other Meeting' })
+      .expect(201);
+    const otherMeetingId = otherRes.body.id;
+
+    agent.data = {
+      summary: 'Summary that must stay in the real meeting',
+      actionItems: [{ text: 'Task that must stay in the real meeting' }],
+      decisions: [{ text: 'Decision' }],
+    };
+    // Имитация prompt injection: агент «решает» вызвать инструменты с чужим meetingId.
+    agent.attackerMeetingId = otherMeetingId;
+
+    await request(app.getHttpServer())
+      .post(`/meetings/${meetingId}/files/${fileId}/transcribe`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(201);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Инсайты сохранились для реальной встречи.
+    const dataRes = await request(app.getHttpServer())
+      .get(`/meetings/${meetingId}/files/${fileId}/insights`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(dataRes.body.summary).toBe('Summary that must stay in the real meeting');
+
+    // Задача создана под реальной встречей, чужая не тронута.
+    const realTasks = await tasksRepository.findAllByMeeting(meetingId);
+    expect(realTasks.map((task) => task.title)).toEqual([
+      'Task that must stay in the real meeting',
+    ]);
+    const otherTasks = await tasksRepository.findAllByMeeting(otherMeetingId);
+    expect(otherTasks).toEqual([]);
+
+    // Summary записан в реальную встречу, чужая без изменений.
+    const storedMeeting = await meetingsRepository.findById(meetingId);
+    expect(storedMeeting?.summary).toBe('Summary that must stay in the real meeting');
+    const otherMeeting = await meetingsRepository.findById(otherMeetingId);
+    expect(otherMeeting?.summary).toBeUndefined();
   }, 10000);
 
   it('should set insights status to failed when Claude returns an error', async () => {
