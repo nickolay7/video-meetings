@@ -60,16 +60,24 @@ describe('Meetings (e2e)', () => {
     return token;
   }
 
+  /** Возвращает userId (JWT sub) из access_token — не зависит от состояния users-репозитория. */
+  function jwtUserId(accessToken: string): string {
+    const payload = accessToken.split('.')[1];
+    return JSON.parse(Buffer.from(payload, 'base64url').toString()).sub as string;
+  }
+
   describe('/meetings (POST)', () => {
-    it('should create a meeting and return it with a generated id (201)', async () => {
+    it('should create a meeting owned by the authenticated user (201)', async () => {
+      const accessToken = await authToken();
       return request(app.getHttpServer())
         .post('/meetings')
-        .set('Authorization', `Bearer ${await authToken()}`)
+        .set('Authorization', `Bearer ${accessToken}`)
         .send({ name: 'Status sync' })
         .expect(201)
         .expect((res) => {
           expect(res.body).toHaveProperty('id');
           expect(res.body.name).toBe('Status sync');
+          expect(res.body.ownerId).toBe(jwtUserId(accessToken));
         });
     });
 

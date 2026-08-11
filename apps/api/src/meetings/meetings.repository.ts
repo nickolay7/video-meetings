@@ -6,9 +6,9 @@ export class MeetingsRepository {
   private meetings: Map<string, Meeting> = new Map();
   private idCounter = 1;
 
-  async create(name: string, description: string): Promise<Meeting> {
+  async create(userId: string, name: string, description: string): Promise<Meeting> {
     const id = String(this.idCounter++);
-    const meeting = new Meeting(id, name, description, new Date());
+    const meeting = new Meeting(id, userId, name, description, new Date());
     this.meetings.set(id, meeting);
     return meeting;
   }
