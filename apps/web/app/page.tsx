@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Avatar, Badge, Button, Card, Chip, Spinner } from '@heroui/react';
 import { FilesModal } from '../components/files/files-modal';
+import { MeetingInsights } from '../components/meeting-insights';
 import {
   displayName,
   getAccessToken,
@@ -217,6 +218,7 @@ export default function HomePage() {
                     </Chip>
                     <FilesModal meetingId={meeting.id} meetingName={meeting.name} />
                   </div>
+                  <MeetingInsights meetingId={meeting.id} />
                 </Card.Content>
               </Card>
             ))}

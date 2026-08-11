@@ -9,6 +9,19 @@ import { MeetingsRepository } from '../src/meetings/meetings.repository';
 import { FilesRepository } from '../src/files/files.repository';
 import { getUploadsDir, MAX_FILE_SIZE } from '../src/files/files.constants';
 
+// ClaudeModule зарегистрирован в AppModule и тянет ESM-only SDK (@anthropic-ai/claude-agent-sdk),
+// который Jest (CJS) не может распарсить. Мокаем на уровне модуля.
+jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  query: jest.fn(),
+  tool: (name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+    name,
+    description,
+    inputSchema,
+    handler,
+  }),
+  createSdkMcpServer: (options: object) => ({ ...options }),
+}));
+
 describe('Files (e2e)', () => {
   let app: INestApplication;
   let usersRepository: UsersRepository;

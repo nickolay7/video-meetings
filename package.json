@@ -19,7 +19,8 @@
     "format:check": "prettier --check .",
     "clean": "rm -rf node_modules apps/*/node_modules apps/*/.next apps/*/dist",
     "prepare": "husky",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "dev:clean": "kill $(lsof -ti:3000,3001) 2>/dev/null; npm run dev"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
