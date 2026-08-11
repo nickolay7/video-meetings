@@ -37,11 +37,6 @@ export class TasksRepository {
     return [...this.tasks.values()].filter((task) => task.status === 'open');
   }
 
-  /** Вставляет готовую сущность — используется автономным `mcp-server.ts` для загрузки seed-данных. */
-  async insert(task: Task): Promise<void> {
-    this.tasks.set(task.id, task);
-  }
-
   /** Мутирует статус задачи и возвращает обновлённую сущность. */
   async updateStatus(task: Task, status: TaskStatus): Promise<Task> {
     task.status = status;

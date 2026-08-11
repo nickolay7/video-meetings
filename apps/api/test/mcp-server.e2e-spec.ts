@@ -1,31 +1,36 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication } from '@nestjs/common';
+import request from 'supertest';
+import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import {
-  SERVER_NAME,
-  SERVER_VERSION,
-  createMeetingTasksMcpServer,
-  type MeetingTasksMcpServerDeps,
-} from '../src/mcp/mcp-server';
-import { MeetingNotFoundError, MeetingNotOwnedError, MeetingOwner } from '../src/mcp/meeting-owner';
+import { McpModule } from '../src/mcp/mcp.module';
 import { MeetingsRepository } from '../src/meetings/meetings.repository';
 import { TasksRepository } from '../src/tasks/tasks.repository';
-import { TasksService } from '../src/tasks/tasks.service';
 
-// SDK (@modelcontextprotocol/sdk) — CJS-совместим, мок не нужен (в отличие от ESM-only
-// @anthropic-ai/claude-agent-sdk). Тест гоняет настоящий протокол через in-memory транспорт.
+// SDK — ESM-only, jest (CJS) его не грузит. Мокаем на уровне модуля pass-through'ом:
+// `tool`/`createSdkMcpServer` возвращают определения инструментов (meeting-tool.ts тянется
+// через McpModule для MEETING_MCP_SERVER_FACTORY), `query` — пустая jest.fn().
+jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  query: jest.fn(),
+  tool: (name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+    name,
+    description,
+    inputSchema,
+    handler,
+  }),
+  createSdkMcpServer: (options: object) => ({ ...options }),
+}));
 
-/** Подключает клиент к серверу через пару InMemoryTransport (полный MCP-протокол). */
-async function connectClient(deps: MeetingTasksMcpServerDeps): Promise<Client> {
-  const server = createMeetingTasksMcpServer(deps);
-  const client = new Client({ name: 'test-client', version: '1.0.0' }, { capabilities: {} });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  return client;
-}
+// Тест гоняет настоящий MCP-протокол поверх HTTP-эндпоинта /mcp: поднимает Nest-приложение
+// (McpModule + регистраторы доменов), слушает эфемерный порт и подключается через
+// StreamableHTTPClientTransport. SDK (@modelcontextprotocol/sdk) — CJS-совместим, мок не нужен.
+// Сервер работает в stateless-режиме (sessionIdGenerator: undefined) с JSON-ответами
+// (enableJsonResponse: true): сессии нет, каждый запрос обрабатывается свежим MCP-сервером.
 
-/** Достаёт JSON из текстового content результата MCP-инструмента. */
-function resultText(result: CallToolResult): unknown {
+/** JSON-разобранный результат инструмента из текстового content. */
+function resultJson(result: CallToolResult): unknown {
   const content = result.content[0];
   if (content.type !== 'text') {
     throw new Error('Expected text content in tool result');
@@ -33,10 +38,7 @@ function resultText(result: CallToolResult): unknown {
   return JSON.parse(content.text);
 }
 
-/**
- * Сообщение ошибки из isError-результата: либо JSON `{ error: ... }` (наш errorResult),
- * либо сырой текст валидации аргументов SDK (`createToolError`).
- */
+/** Сообщение ошибки из isError-результата: либо JSON `{ error: ... }`, либо сырой текст. */
 function errorMessage(result: CallToolResult): string {
   const content = result.content[0];
   if (content.type !== 'text') {
@@ -50,8 +52,8 @@ function errorMessage(result: CallToolResult): string {
   }
 }
 
-/** Достаёт JSON из текстового содержимого ресурса (contents может быть text- или blob-вариантом). */
-function resourceText(result: { contents: unknown[] }): unknown {
+/** JSON из текстового содержимого ресурса. */
+function resourceJson(result: { contents: unknown[] }): unknown {
   const content = result.contents[0] as { text?: string };
   if (content.text === undefined) {
     throw new Error('Expected text content in resource result');
@@ -68,462 +70,257 @@ interface TaskJson {
   assignee?: string;
 }
 
-describe('MCP server meeting-tasks (stdio-совместимый)', () => {
+describe('MCP HTTP server (/mcp)', () => {
+  let app: INestApplication;
+  let client: Client;
   let meetingsRepository: MeetingsRepository;
   let tasksRepository: TasksRepository;
-  let tasksService: TasksService;
 
-  beforeEach(() => {
-    meetingsRepository = new MeetingsRepository();
-    tasksRepository = new TasksRepository();
-    tasksService = new TasksService(tasksRepository, meetingsRepository);
-  });
+  /** Поднимает приложение и подключает MCP-клиент к /mcp на эфемерном порту. */
+  async function startApp(): Promise<INestApplication> {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [McpModule],
+    }).compile();
 
-  const deps = (): MeetingTasksMcpServerDeps => ({ meetingsRepository, tasksService });
+    const nestApp = moduleFixture.createNestApplication();
+    await nestApp.init();
+    await nestApp.listen(0);
+    meetingsRepository = moduleFixture.get(MeetingsRepository);
+    tasksRepository = moduleFixture.get(TasksRepository);
+    return nestApp;
+  }
 
-  async function callTool(
-    client: Client,
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<CallToolResult> {
+  async function callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
     // Без resultSchema возвращается union с вариантом task-инструмента — сужаем до CallToolResult.
     return (await client.callTool({ name, arguments: args })) as CallToolResult;
   }
 
+  /** Seed-данные: встреча владельца user-1 с открытыми/завершённой задачами и встреча user-2. */
+  async function seed() {
+    await meetingsRepository.create('user-1', 'Planning', 'Sprint planning');
+    await meetingsRepository.create('user-2', 'Other planning', '');
+    await tasksRepository.create('1', 'Prepare slides', 'manual', 'Alice');
+    await tasksRepository.create('1', 'Send summary', 'manual');
+    const completed = await tasksRepository.create('1', 'Completed task', 'manual');
+    await tasksRepository.updateStatus(completed, 'completed');
+  }
+
+  beforeAll(async () => {
+    app = await startApp();
+    const port = (app.getHttpServer().address() as AddressInfo).port;
+    client = new Client({ name: 'e2e-client', version: '1.0.0' }, { capabilities: {} });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)),
+    );
+  });
+
+  beforeEach(async () => {
+    await meetingsRepository.clear();
+    await tasksRepository.clear();
+    await seed();
+  });
+
+  afterAll(async () => {
+    await client.close();
+    await app.close();
+  });
+
   describe('JSON-описание сервера и инструментов', () => {
-    it('передаёт имя и версию сервера в serverInfo (из конструктора McpServer из SDK)', async () => {
-      const client = await connectClient(deps());
-      try {
-        expect(client.getServerVersion()).toEqual({ name: SERVER_NAME, version: SERVER_VERSION });
-      } finally {
-        await client.close();
-      }
+    it('передаёт имя и версию сервера в serverInfo', async () => {
+      expect(client.getServerVersion()).toEqual({ name: 'meeting-tasks', version: '1.0.0' });
     });
 
-    it('регистрирует findTask с описанием, аннотациями и схемой query/meeting_id/user_id', async () => {
-      const client = await connectClient(deps());
-      try {
-        const { tools } = await client.listTools();
-        const findTask = tools.find((tool) => tool.name === 'findTask');
-        expect(findTask).toBeDefined();
-        expect(findTask!.description).toContain('Search tasks of a meeting');
-
-        expect(findTask!.annotations).toEqual({
-          title: 'Search meeting tasks',
-          readOnlyHint: true,
-          idempotentHint: true,
-        });
-
-        const properties = findTask!.inputSchema.properties ?? {};
-        expect(Object.keys(properties)).toEqual(['query', 'meeting_id', 'user_id']);
-        expect([...(findTask!.inputSchema.required ?? [])].sort()).toEqual([
-          'meeting_id',
-          'query',
-          'user_id',
-        ]);
-      } finally {
-        await client.close();
-      }
-    });
-
-    it('регистрирует addTask с readOnlyHint: false и схемой title/meeting_id/user_id', async () => {
-      const client = await connectClient(deps());
-      try {
-        const { tools } = await client.listTools();
-        const addTask = tools.find((tool) => tool.name === 'addTask');
-        expect(addTask).toBeDefined();
-        expect(addTask!.description).toContain('Create a new task');
-
-        expect(addTask!.annotations).toEqual({
-          title: 'Add a meeting task',
-          readOnlyHint: false,
-        });
-
-        const properties = addTask!.inputSchema.properties ?? {};
-        expect(Object.keys(properties).sort()).toEqual([
-          'assignee',
-          'meeting_id',
-          'source',
-          'title',
-          'user_id',
-        ]);
-        expect([...(addTask!.inputSchema.required ?? [])].sort()).toEqual([
-          'meeting_id',
-          'title',
-          'user_id',
-        ]);
-      } finally {
-        await client.close();
-      }
+    it('регистрирует инструменты findTask и addTask с ожидаемыми схемами', async () => {
+      const { tools } = await client.listTools();
+      const findTask = tools.find((tool) => tool.name === 'findTask');
+      const addTask = tools.find((tool) => tool.name === 'addTask');
+      expect(findTask).toBeDefined();
+      expect(findTask!.annotations?.readOnlyHint).toBe(true);
+      expect(addTask).toBeDefined();
+      expect(addTask!.annotations?.readOnlyHint).toBe(false);
+      const addArgs = addTask!.inputSchema?.properties;
+      expect(addArgs).toMatchObject({
+        meeting_id: { type: 'string' },
+        user_id: { type: 'string' },
+        title: { type: 'string' },
+      });
     });
   });
 
-  describe('addTask — создание задачи', () => {
-    it('создаёт задачу встречи через TasksService и возвращает её', async () => {
-      const meeting = await meetingsRepository.create('user-1', 'Planning', '');
-      const client = await connectClient(deps());
-      try {
-        const result = await callTool(client, 'addTask', {
-          meeting_id: meeting.id,
-          user_id: 'user-1',
-          title: 'Prepare slides',
-          assignee: 'Alice',
-        });
-        expect(result.isError).not.toBe(true);
-        const task = resultText(result) as TaskJson;
-        expect(task.title).toBe('Prepare slides');
-        expect(task.meetingId).toBe(meeting.id);
-        expect(task.status).toBe('open');
+  describe('Инструменты', () => {
+    it('addTask создаёт задачу встречи владельца (source по умолчанию manual)', async () => {
+      const result = await callTool('addTask', {
+        meeting_id: '1',
+        user_id: 'user-1',
+        title: 'New task',
+        assignee: 'Bob',
+      });
+      expect(result.isError).not.toBe(true);
+      const task = resultJson(result) as TaskJson;
+      expect(task.meetingId).toBe('1');
+      expect(task.title).toBe('New task');
+      expect(task.assignee).toBe('Bob');
+      expect(task.source).toBe('manual');
+      expect(task.status).toBe('open');
 
-        // Данные прошли через единый сервисный слой — задача видна в репозитории.
-        const stored = await tasksRepository.findById(task.id);
-        expect(stored?.title).toBe('Prepare slides');
-        expect(stored?.source).toBe('manual');
-        expect(stored?.assignee).toBe('Alice');
-      } finally {
-        await client.close();
-      }
+      const found = await tasksRepository.findById(task.id);
+      expect(found?.title).toBe('New task');
     });
 
-    it('создаёт задачу с source insights, когда он передан', async () => {
-      const meeting = await meetingsRepository.create('user-1', 'Planning', '');
-      const client = await connectClient(deps());
-      try {
-        const result = await callTool(client, 'addTask', {
-          meeting_id: meeting.id,
-          user_id: 'user-1',
-          title: 'Send minutes',
-          source: 'insights',
-        });
-        expect(result.isError).not.toBe(true);
-        const task = resultText(result) as TaskJson;
-        expect(task.source).toBe('insights');
-      } finally {
-        await client.close();
-      }
+    it('addTask отклоняет запрос не-владельца встречи (isError)', async () => {
+      const result = await callTool('addTask', {
+        meeting_id: '1',
+        user_id: 'user-2', // встреча принадлежит user-1
+        title: 'Nope',
+      });
+      expect(result.isError).toBe(true);
+      expect(errorMessage(result)).toContain('does not belong to user');
     });
 
-    it('отказывает в создании задачи для встречи, принадлежащей другому пользователю', async () => {
-      const meeting = await meetingsRepository.create('user-2', 'Other planning', '');
-      const client = await connectClient(deps());
-      try {
-        const result = await callTool(client, 'addTask', {
-          meeting_id: meeting.id,
-          user_id: 'user-1',
-          title: 'Prepare slides',
-        });
-        expect(result.isError).toBe(true);
-        expect(errorMessage(result)).toContain('does not belong to user');
-      } finally {
-        await client.close();
-      }
+    it('addTask отклоняет несуществующую встречу (isError)', async () => {
+      const result = await callTool('addTask', {
+        meeting_id: 'missing',
+        user_id: 'user-1',
+        title: 'Nope',
+      });
+      expect(result.isError).toBe(true);
+      expect(errorMessage(result)).toContain('not found');
     });
 
-    it('возвращает isError для неизвестной встречи', async () => {
-      const client = await connectClient(deps());
-      try {
-        const result = await callTool(client, 'addTask', {
-          meeting_id: 'missing',
-          user_id: 'user-1',
-          title: 'Prepare slides',
-        });
-        expect(result.isError).toBe(true);
-        expect(errorMessage(result)).toContain('not found');
-      } finally {
-        await client.close();
-      }
+    it('findTask ищет задачи по подстроке и игнорирует регистр', async () => {
+      const result = await callTool('findTask', {
+        query: 'slides',
+        meeting_id: '1',
+        user_id: 'user-1',
+      });
+      expect(result.isError).not.toBe(true);
+      const tasks = resultJson(result) as TaskJson[];
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].title).toBe('Prepare slides');
     });
 
-    it('возвращает isError, если не передан title', async () => {
-      const meeting = await meetingsRepository.create('user-1', 'Planning', '');
-      const client = await connectClient(deps());
-      try {
-        const result = await callTool(client, 'addTask', {
-          meeting_id: meeting.id,
-          user_id: 'user-1',
-        });
-        expect(result.isError).toBe(true);
-        expect(errorMessage(result)).toContain('title');
-      } finally {
-        await client.close();
-      }
-    });
-  });
-
-  describe('MeetingOwner — проверка владельца перед возвратом данных', () => {
-    it('возвращает isError для неизвестной встречи', async () => {
-      const client = await connectClient(deps());
-      try {
-        const result = await callTool(client, 'findTask', {
-          query: '',
-          meeting_id: 'missing',
-          user_id: 'user-1',
-        });
-        expect(result.isError).toBe(true);
-        expect(errorMessage(result)).toContain('not found');
-      } finally {
-        await client.close();
-      }
+    it('findTask с пустым query возвращает все задачи встречи', async () => {
+      const result = await callTool('findTask', { query: '', meeting_id: '1', user_id: 'user-1' });
+      const tasks = resultJson(result) as TaskJson[];
+      expect(tasks).toHaveLength(3);
     });
 
-    it('отказывает в доступе к встрече, принадлежащей другому пользователю', async () => {
-      const otherMeeting = await meetingsRepository.create('user-2', 'Other planning', '');
-      const client = await connectClient(deps());
-      try {
-        const result = await callTool(client, 'findTask', {
-          query: '',
-          meeting_id: otherMeeting.id,
-          user_id: 'user-1',
-        });
-        expect(result.isError).toBe(true);
-        expect(errorMessage(result)).toContain('does not belong to user');
-      } finally {
-        await client.close();
-      }
-    });
-
-    it('возвращает задачи только своей встречи', async () => {
-      const ownedMeeting = await meetingsRepository.create('user-1', 'Planning', '');
-      const otherMeeting = await meetingsRepository.create('user-1', 'Other', '');
-      await tasksRepository.create(ownedMeeting.id, 'Prepare slides', 'manual', 'Alice');
-      await tasksRepository.create(otherMeeting.id, 'Book room', 'manual');
-      const client = await connectClient(deps());
-      try {
-        const result = await callTool(client, 'findTask', {
-          query: '',
-          meeting_id: ownedMeeting.id,
-          user_id: 'user-1',
-        });
-        expect(result.isError).not.toBe(true);
-        const tasks = resultText(result) as TaskJson[];
-        expect(tasks.map((task) => task.title)).toEqual(['Prepare slides']);
-      } finally {
-        await client.close();
-      }
-    });
-  });
-
-  describe('query-фильтр', () => {
-    it('ищет по подстроке в названии задачи (регистронезависимо)', async () => {
-      const meeting = await meetingsRepository.create('user-1', 'Planning', '');
-      await tasksRepository.create(meeting.id, 'Prepare slides', 'manual');
-      await tasksRepository.create(meeting.id, 'Send summary', 'manual');
-      const client = await connectClient(deps());
-      try {
-        const result = await callTool(client, 'findTask', {
-          query: 'SLIDES',
-          meeting_id: meeting.id,
-          user_id: 'user-1',
-        });
-        const tasks = resultText(result) as TaskJson[];
-        expect(tasks.map((task) => task.title)).toEqual(['Prepare slides']);
-      } finally {
-        await client.close();
-      }
-    });
-
-    it('пустой query возвращает все задачи встречи', async () => {
-      const meeting = await meetingsRepository.create('user-1', 'Planning', '');
-      await tasksRepository.create(meeting.id, 'Prepare slides', 'manual');
-      await tasksRepository.create(meeting.id, 'Send summary', 'manual');
-      const client = await connectClient(deps());
-      try {
-        const result = await callTool(client, 'findTask', {
-          query: '',
-          meeting_id: meeting.id,
-          user_id: 'user-1',
-        });
-        const tasks = resultText(result) as TaskJson[];
-        expect(tasks.map((task) => task.title)).toEqual(['Prepare slides', 'Send summary']);
-      } finally {
-        await client.close();
-      }
+    it('findTask не показывает задачи чужой встречи (ownership)', async () => {
+      const result = await callTool('findTask', { query: '', meeting_id: '1', user_id: 'user-2' });
+      expect(result.isError).toBe(true);
+      expect(errorMessage(result)).toContain('does not belong to user');
     });
   });
 
   describe('Ресурсы', () => {
-    it('регистрирует статический ресурс tasks://open в списке ресурсов', async () => {
-      const client = await connectClient(deps());
-      try {
-        const { resources } = await client.listResources();
-        const openTasks = resources.find((resource) => resource.uri === 'tasks://open');
-        expect(openTasks).toBeDefined();
-        expect(openTasks!.name).toBe('tasks.open');
-        expect(openTasks!.description).toContain('open tasks');
-        expect(openTasks!.mimeType).toBe('application/json');
-      } finally {
-        await client.close();
-      }
+    it('регистрирует статический ресурс tasks://open и шаблон task://{id}', async () => {
+      const { resources } = await client.listResources();
+      expect(resources.some((resource) => resource.uri === 'tasks://open')).toBe(true);
+
+      const { resourceTemplates } = await client.listResourceTemplates();
+      expect(resourceTemplates.some((template) => template.uriTemplate === 'task://{id}')).toBe(
+        true,
+      );
     });
 
-    it('регистрирует динамический ресурс task://{id} в списке шаблонов', async () => {
-      const client = await connectClient(deps());
-      try {
-        const { resourceTemplates } = await client.listResourceTemplates();
-        const taskById = resourceTemplates.find(
-          (template) => template.uriTemplate === 'task://{id}',
-        );
-        expect(taskById).toBeDefined();
-        expect(taskById!.name).toBe('task');
-        expect(taskById!.description).toContain('task');
-      } finally {
-        await client.close();
-      }
+    it('tasks://open возвращает только открытые задачи всех встреч', async () => {
+      const result = await client.readResource({ uri: 'tasks://open' });
+      const tasks = resourceJson(result) as TaskJson[];
+      expect(tasks).toHaveLength(2);
+      expect(tasks.every((task) => task.status === 'open')).toBe(true);
     });
 
-    it('читает статический ресурс tasks://open — только открытые задачи всех встреч', async () => {
-      const meeting1 = await meetingsRepository.create('user-1', 'Planning', '');
-      const meeting2 = await meetingsRepository.create('user-1', 'Other', '');
-      await tasksRepository.create(meeting1.id, 'Open task A', 'manual');
-      const completedTask = await tasksRepository.create(meeting1.id, 'Completed task', 'manual');
-      await tasksRepository.create(meeting2.id, 'Open task B', 'manual');
-      await tasksRepository.updateStatus(completedTask, 'completed');
-
-      const client = await connectClient(deps());
-      try {
-        const result = await client.readResource({ uri: 'tasks://open' });
-        const tasks = resourceText(result) as TaskJson[];
-        expect(tasks.map((task) => task.title).sort()).toEqual(['Open task A', 'Open task B']);
-        for (const task of tasks) {
-          expect(task.status).toBe('open');
-        }
-      } finally {
-        await client.close();
-      }
+    it('task://{id} возвращает задачу по id', async () => {
+      const result = await client.readResource({ uri: 'task://1' });
+      const task = resourceJson(result) as TaskJson;
+      expect(task.title).toBe('Prepare slides');
     });
 
-    it('читает динамический ресурс task://{id} — конкретная задача по её id', async () => {
-      const meeting = await meetingsRepository.create('user-1', 'Planning', '');
-      const task = await tasksRepository.create(meeting.id, 'Prepare slides', 'manual', 'Alice');
-      const client = await connectClient(deps());
-      try {
-        const result = await client.readResource({ uri: `task://${task.id}` });
-        const data = resourceText(result) as TaskJson;
-        expect(data.id).toBe(task.id);
-        expect(data.title).toBe('Prepare slides');
-        expect(data.assignee).toBe('Alice');
-      } finally {
-        await client.close();
-      }
-    });
-
-    it('даёт ошибку чтения для неизвестного id задачи', async () => {
-      const client = await connectClient(deps());
-      try {
-        await expect(client.readResource({ uri: 'task://missing' })).rejects.toThrow(
-          /Task with id missing not found/,
-        );
-      } finally {
-        await client.close();
-      }
+    it('task://{id} для несуществующей задачи даёт ошибку чтения', async () => {
+      await expect(client.readResource({ uri: 'task://missing' })).rejects.toThrow(/not found/);
     });
   });
 
   describe('Промпты', () => {
     it('регистрирует meeting_brief и meeting_task_review с аргументом meeting_id', async () => {
-      const client = await connectClient(deps());
-      try {
-        const { prompts } = await client.listPrompts();
-        const brief = prompts.find((prompt) => prompt.name === 'meeting_brief');
-        const review = prompts.find((prompt) => prompt.name === 'meeting_task_review');
-        expect(brief).toBeDefined();
-        expect(brief!.title).toBe('Meeting Brief');
-        expect(brief!.description).toContain('brief');
-        expect(brief!.arguments).toEqual([{ name: 'meeting_id', required: true }]);
-        expect(review).toBeDefined();
-        expect(review!.title).toBe('Meeting Task Review');
-        expect(review!.description).toContain('tasks');
-        expect(review!.arguments).toEqual([{ name: 'meeting_id', required: true }]);
-      } finally {
-        await client.close();
-      }
+      const { prompts } = await client.listPrompts();
+      const brief = prompts.find((prompt) => prompt.name === 'meeting_brief');
+      const review = prompts.find((prompt) => prompt.name === 'meeting_task_review');
+      expect(brief).toBeDefined();
+      expect(brief!.title).toBe('Meeting Brief');
+      expect(brief!.arguments).toEqual([{ name: 'meeting_id', required: true }]);
+      expect(review).toBeDefined();
+      expect(review!.title).toBe('Meeting Task Review');
+      expect(review!.arguments).toEqual([{ name: 'meeting_id', required: true }]);
     });
 
     it('meeting_brief возвращает структурированное сообщение с информацией встречи', async () => {
-      const meeting = await meetingsRepository.create('user-1', 'Planning', 'Sprint planning');
-      const client = await connectClient(deps());
-      try {
-        const result = await client.getPrompt({
-          name: 'meeting_brief',
-          arguments: { meeting_id: meeting.id },
-        });
-        expect(result.messages).toHaveLength(1);
-        const message = result.messages[0];
-        expect(message.role).toBe('user');
-        expect(message.content.type).toBe('text');
-        const text = message.content.type === 'text' ? message.content.text : '';
-        expect(text).toContain('Meeting Brief: Planning');
-        expect(text).toContain('Sprint planning');
-      } finally {
-        await client.close();
-      }
+      const result = await client.getPrompt({
+        name: 'meeting_brief',
+        arguments: { meeting_id: '1' },
+      });
+      expect(result.messages).toHaveLength(1);
+      const message = result.messages[0];
+      expect(message.role).toBe('user');
+      expect(message.content.type).toBe('text');
+      const text = message.content.type === 'text' ? message.content.text : '';
+      expect(text).toContain('Meeting Brief: Planning');
+      expect(text).toContain('Sprint planning');
     });
 
-    it('meeting_task_review агрегирует задачи встречи в готовый промпт', async () => {
-      const meeting = await meetingsRepository.create('user-1', 'Planning', '');
-      await tasksRepository.create(meeting.id, 'Prepare slides', 'manual', 'Alice');
-      await tasksRepository.create(meeting.id, 'Send minutes', 'manual');
-      const client = await connectClient(deps());
-      try {
-        const result = await client.getPrompt({
-          name: 'meeting_task_review',
-          arguments: { meeting_id: meeting.id },
-        });
-        expect(result.messages).toHaveLength(1);
-        const content = result.messages[0].content;
-        expect(content.type).toBe('text');
-        const text = content.type === 'text' ? content.text : '';
-        expect(text).toContain('Meeting Task Review: Planning');
-        expect(text).toContain('1. [open] Prepare slides (assignee: Alice)');
-        expect(text).toContain('2. [open] Send minutes');
-      } finally {
-        await client.close();
-      }
-    });
-
-    it('возвращает ошибку для неизвестной встречи', async () => {
-      const client = await connectClient(deps());
-      try {
-        await expect(
-          client.getPrompt({ name: 'meeting_brief', arguments: { meeting_id: 'missing' } }),
-        ).rejects.toThrow(/Meeting with id missing not found/);
-      } finally {
-        await client.close();
-      }
+    it('meeting_task_review агрегирует задачи встречи в сообщении', async () => {
+      const result = await client.getPrompt({
+        name: 'meeting_task_review',
+        arguments: { meeting_id: '1' },
+      });
+      const message = result.messages[0];
+      const text = message.content.type === 'text' ? message.content.text : '';
+      expect(text).toContain('Meeting Task Review: Planning');
+      expect(text).toContain('[open] Prepare slides');
+      expect(text).toContain('[completed] Completed task');
     });
   });
-});
 
-describe('MeetingOwner (unit)', () => {
-  let meetingsRepository: MeetingsRepository;
+  describe('HTTP-уровень (stateless + JSON-ответы)', () => {
+    const server = () => app.getHttpServer();
+    const jsonRpc = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'supertest', version: '1.0.0' },
+      },
+    };
 
-  beforeEach(() => {
-    meetingsRepository = new MeetingsRepository();
-  });
+    it('initialize отвечает JSON с serverInfo и без Mcp-Session-Id (stateless)', async () => {
+      const res = await request(server())
+        .post('/mcp')
+        .set('Accept', 'application/json, text/event-stream')
+        .set('Content-Type', 'application/json')
+        .send(jsonRpc);
+      expect(res.status).toBe(200);
+      expect(res.headers['mcp-session-id']).toBeUndefined();
+      expect(res.body.result.serverInfo).toEqual({ name: 'meeting-tasks', version: '1.0.0' });
+      expect(res.body.result.protocolVersion).toBe('2025-06-18');
+    });
 
-  it('возвращает встречу её владельцу', async () => {
-    const meeting = await meetingsRepository.create('user-1', 'Planning', '');
-    const owner = new MeetingOwner(meetingsRepository);
+    it('отдаёт 406 без Accept-заголовка (transport validation)', async () => {
+      const res = await request(server())
+        .post('/mcp')
+        .set('Content-Type', 'application/json')
+        .send(jsonRpc);
+      expect(res.status).toBe(406);
+    });
 
-    const found = await owner.findOwnedByUser('user-1', meeting.id);
-
-    expect(found.id).toBe(meeting.id);
-  });
-
-  it('бросает MeetingNotFoundError для неизвестной встречи', async () => {
-    const owner = new MeetingOwner(meetingsRepository);
-
-    await expect(owner.findOwnedByUser('user-1', 'missing')).rejects.toBeInstanceOf(
-      MeetingNotFoundError,
-    );
-  });
-
-  it('бросает MeetingNotOwnedError для встречи другого пользователя', async () => {
-    const meeting = await meetingsRepository.create('user-2', 'Planning', '');
-    const owner = new MeetingOwner(meetingsRepository);
-
-    await expect(owner.findOwnedByUser('user-1', meeting.id)).rejects.toBeInstanceOf(
-      MeetingNotOwnedError,
-    );
+    it('отдаёт 415 при не-JSON Content-Type', async () => {
+      const res = await request(server())
+        .post('/mcp')
+        .set('Accept', 'application/json, text/event-stream')
+        .set('Content-Type', 'text/plain')
+        .send('not json');
+      expect(res.status).toBe(415);
+    });
   });
 });

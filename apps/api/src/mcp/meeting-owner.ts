@@ -21,7 +21,7 @@ export class MeetingNotOwnedError extends Error {
  * Сервис владельца встречи для MCP-инструментов. `meeting_id` приходит в инпут извне,
  * поэтому перед возвратом данных нужно убедиться, что встреча принадлежит тому
  * пользователю, который делает запрос (`user_id` передаётся вместе с `meeting_id`).
- * Проверка выполняется до обращения к данным встречи (см. `findTask`/`addTask` в mcp-server.ts).
+ * Проверка выполняется до обращения к данным встречи (см. `findTask`/`addTask` в task-tools.ts).
  */
 export class MeetingOwner {
   constructor(private readonly meetingsRepository: MeetingsRepository) {}

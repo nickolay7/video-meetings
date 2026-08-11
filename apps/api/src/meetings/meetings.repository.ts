@@ -13,11 +13,6 @@ export class MeetingsRepository {
     return meeting;
   }
 
-  /** Вставляет готовую сущность — используется автономным `mcp-server.ts` для загрузки seed-данных. */
-  async insert(meeting: Meeting): Promise<void> {
-    this.meetings.set(meeting.id, meeting);
-  }
-
   async findAll(): Promise<Meeting[]> {
     return [...this.meetings.values()];
   }
