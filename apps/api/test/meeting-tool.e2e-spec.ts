@@ -78,7 +78,7 @@ describe('Meeting MCP tools', () => {
   });
 
   async function createMeeting(name = 'Planning', description = ''): Promise<MeetingJson> {
-    return meetingsRepository.create(name, description);
+    return meetingsRepository.create('user-1', name, description);
   }
 
   async function createTask(

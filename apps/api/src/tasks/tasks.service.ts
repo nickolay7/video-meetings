@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { MeetingsRepository } from '../meetings/meetings.repository';
-import { Task, TaskStatus } from './task.entity';
+import { Task, TaskSource, TaskStatus } from './task.entity';
 import { TasksRepository } from './tasks.repository';
 
 /** Action item, извлечённый генератором инсайтов из транскрипции. */
@@ -45,6 +45,35 @@ export class TasksService {
         actionItem.assignee,
       );
     }
+  }
+
+  /**
+   * Создаёт задачу встречи (единый сервисный слой для MCP-инструмента `addTask`).
+   * `source` по умолчанию `manual`; агент инсайтов передаёт `insights`, чтобы задачи
+   * можно было очищать при перегенерации.
+   */
+  async createTask(
+    meetingId: string,
+    title: string,
+    source: TaskSource = 'manual',
+    assignee?: string,
+  ): Promise<Task> {
+    await this.ensureMeetingExists(meetingId);
+    return this.tasksRepository.create(meetingId, title, source, assignee);
+  }
+
+  /** Возвращает задачу по id, бросая `NotFoundException`, если её нет (для MCP-ресурса `task://{id}`). */
+  async getTaskById(taskId: string): Promise<Task> {
+    const task = await this.tasksRepository.findById(taskId);
+    if (!task) {
+      throw new NotFoundException(`Task with id ${taskId} not found`);
+    }
+    return task;
+  }
+
+  /** Все открытые задачи всех встреч — для статического MCP-ресурса `tasks://open`. */
+  async listOpenTasks(): Promise<Task[]> {
+    return this.tasksRepository.findAllOpen();
   }
 
   private async ensureMeetingExists(meetingId: string): Promise<void> {

@@ -6,11 +6,16 @@ export class MeetingsRepository {
   private meetings: Map<string, Meeting> = new Map();
   private idCounter = 1;
 
-  async create(name: string, description: string): Promise<Meeting> {
+  async create(userId: string, name: string, description: string): Promise<Meeting> {
     const id = String(this.idCounter++);
-    const meeting = new Meeting(id, name, description, new Date());
+    const meeting = new Meeting(id, userId, name, description, new Date());
     this.meetings.set(id, meeting);
     return meeting;
+  }
+
+  /** Вставляет готовую сущность — используется автономным `mcp-server.ts` для загрузки seed-данных. */
+  async insert(meeting: Meeting): Promise<void> {
+    this.meetings.set(meeting.id, meeting);
   }
 
   async findAll(): Promise<Meeting[]> {

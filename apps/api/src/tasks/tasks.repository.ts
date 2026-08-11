@@ -32,6 +32,16 @@ export class TasksRepository {
     return this.tasks.get(id);
   }
 
+  /** Все открытые задачи всех встреч — для статического ресурса MCP-сервера. */
+  async findAllOpen(): Promise<Task[]> {
+    return [...this.tasks.values()].filter((task) => task.status === 'open');
+  }
+
+  /** Вставляет готовую сущность — используется автономным `mcp-server.ts` для загрузки seed-данных. */
+  async insert(task: Task): Promise<void> {
+    this.tasks.set(task.id, task);
+  }
+
   /** Мутирует статус задачи и возвращает обновлённую сущность. */
   async updateStatus(task: Task, status: TaskStatus): Promise<Task> {
     task.status = status;
