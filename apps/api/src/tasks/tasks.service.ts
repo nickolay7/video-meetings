@@ -71,9 +71,23 @@ export class TasksService {
     return task;
   }
 
-  /** Все открытые задачи всех встреч — для статического MCP-ресурса `tasks://open`. */
+  /** Все открытые задачи всех встреч — служебный метод (без авторизации). */
   async listOpenTasks(): Promise<Task[]> {
     return this.tasksRepository.findAllOpen();
+  }
+
+  /**
+   * Все открытые задачи встреч, принадлежащих пользователю `ownerId` — для MCP-ресурса
+   * `tasks://open` с авторизацией: чужие встречи в результат не попадают.
+   */
+  async listOpenTasksForOwner(ownerId: string): Promise<Task[]> {
+    const ownedMeetings = (await this.meetingsRepository.findAll()).filter(
+      (meeting) => meeting.ownerId === ownerId,
+    );
+    const ownedMeetingIds = new Set(ownedMeetings.map((meeting) => meeting.id));
+    return (await this.tasksRepository.findAllOpen()).filter((task) =>
+      ownedMeetingIds.has(task.meetingId),
+    );
   }
 
   private async ensureMeetingExists(meetingId: string): Promise<void> {

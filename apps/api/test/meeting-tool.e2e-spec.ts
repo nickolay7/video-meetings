@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { JwtModule } from '@nestjs/jwt';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { McpModule } from '../src/mcp/mcp.module';
 import {
@@ -349,7 +350,8 @@ describe('Meeting MCP tools', () => {
   describe('McpModule', () => {
     it('provides a factory that builds a meeting server scoped to the given meeting', async () => {
       const moduleFixture: TestingModule = await Test.createTestingModule({
-        imports: [McpModule],
+        // Глобальный JwtModule — аналог AuthModule: McpAuthGuard в McpModule резолвит JwtService.
+        imports: [McpModule, JwtModule.register({ global: true, secret: 'default-secret-key' })],
       }).compile();
 
       const factory = moduleFixture.get<MeetingMcpServerFactory>(MEETING_MCP_SERVER_FACTORY);

@@ -11,7 +11,10 @@ const CommandHandlers = [RegisterCommandHandler, LoginCommandHandler];
 @Module({
   imports: [
     CqrsModule,
+    // Глобальный: JwtService резолвится в любом модуле (например, McpAuthGuard для `/mcp`)
+    // без отдельного импорта JwtModule.
     JwtModule.register({
+      global: true,
       secret: process.env.JWT_SECRET || 'default-secret-key',
       signOptions: { expiresIn: '24h' },
     }),

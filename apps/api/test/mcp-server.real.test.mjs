@@ -11,8 +11,9 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 
 // Клиентский тест-скрипт: поднимает собранное API (`node dist/main.js`) на эфемерном порту,
 // регистрирует пользователей и создаёт встречу через обычные HTTP-эндпоинты, затем
-// подключает MCP-клиент к /mcp (StreamableHTTPClientTransport) и проверяет инструменты,
-// ресурсы и промпты. Скрипт `test:mcp` собирает API перед запуском (нужен dist/main.js).
+// подключает MCP-клиентов к /mcp (StreamableHTTPClientTransport) с Bearer-токенами в
+// Authorization и проверяет инструменты, ресурсы и промпты. Скрипт `test:mcp` собирает API
+// перед запуском (нужен dist/main.js).
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_PATH = path.resolve(__dirname, '..', 'dist', 'main.js');
@@ -55,6 +56,17 @@ function jwtSub(accessToken) {
   return decoded.sub;
 }
 
+/** Подключает MCP-клиента к /mcp с Bearer-токеном в Authorization. */
+async function connectClient(baseUrl, token) {
+  const client = new Client({ name: 'mcp-client-test', version: '1.0.0' }, { capabilities: {} });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    }),
+  );
+  return client;
+}
+
 function taskTitles(result) {
   assert.ok(result.content[0].type === 'text', 'ожидается текстовый content');
   return JSON.parse(result.content[0].text).map((task) => task.title);
@@ -73,7 +85,7 @@ function promptText(result) {
 }
 
 test(
-  'MCP meeting-tasks: API (HTTP) + MCP-клиент — инструменты, ресурсы, промпты',
+  'MCP meeting-tasks: API (HTTP) + MCP-клиент — аутентификация, инструменты, ресурсы, промпты',
   { timeout: 60_000 },
   async (t) => {
     assert.ok(
@@ -98,7 +110,8 @@ test(
       apiOutput += chunk;
     });
 
-    let client;
+    let clientUser1;
+    let clientUser2;
     try {
       await waitForApi(baseUrl, 20_000);
 
@@ -129,15 +142,36 @@ test(
       const meeting = await meetingRes.json();
       assert.equal(meeting.ownerId, user1.userId, 'встреча принадлежит user-1');
 
-      // 3. Подключаем MCP-клиент к /mcp.
-      client = new Client({ name: 'mcp-client-test', version: '1.0.0' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+      // 3. Аутентификация на HTTP-уровне: без токена — 401, с токеном — JSON-RPC работает.
+      const noAuthRes = await fetch(`${baseUrl}/mcp`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json, text/event-stream',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-06-18',
+            capabilities: {},
+            clientInfo: { name: 'raw', version: '1.0.0' },
+          },
+        }),
+      });
+      assert.equal(noAuthRes.status, 401, 'MCP-запрос без токена должен дать 401');
 
-      // 4. JSON-описание сервера: name/version из McpServer.
-      assert.deepEqual(client.getServerVersion(), { name: 'meeting-tasks', version: '1.0.0' });
+      // 4. Подключаем MCP-клиентов под токенами user-1 и user-2.
+      clientUser1 = await connectClient(baseUrl, user1.access_token);
+      clientUser2 = await connectClient(baseUrl, user2.access_token);
 
-      // 5. Список инструментов: findTask (readOnly) и addTask (запись).
-      const { tools } = await client.listTools();
+      // 5. JSON-описание сервера: name/version из McpServer.
+      assert.deepEqual(clientUser1.getServerVersion(), { name: 'meeting-tasks', version: '1.0.0' });
+
+      // 6. Список инструментов: findTask (readOnly) и addTask (запись). Личность из JWT,
+      //    поэтому в схемах нет user_id — только meeting_id (и прочие доменные поля).
+      const { tools } = await clientUser1.listTools();
       const findTask = tools.find((tool) => tool.name === 'findTask');
       const addTask = tools.find((tool) => tool.name === 'addTask');
       assert.ok(findTask, 'findTask должен быть зарегистрирован');
@@ -145,26 +179,28 @@ test(
       assert.match(findTask.description, /Search tasks of a meeting/);
       assert.equal(findTask.annotations.readOnlyHint, true);
       assert.equal(addTask.annotations.readOnlyHint, false);
-      assert.deepEqual(Object.keys(findTask.inputSchema.properties ?? {}), [
-        'query',
+      assert.deepEqual(Object.keys(findTask.inputSchema.properties ?? {}), ['query', 'meeting_id']);
+      assert.deepEqual(Object.keys(addTask.inputSchema.properties ?? {}).sort(), [
+        'assignee',
         'meeting_id',
-        'user_id',
+        'source',
+        'title',
       ]);
 
-      // 6. Список ресурсов: статический tasks://open и шаблон task://{id}.
-      const { resources } = await client.listResources();
+      // 7. Список ресурсов: статический tasks://open и шаблон task://{id}.
+      const { resources } = await clientUser1.listResources();
       const openTasksResource = resources.find((resource) => resource.uri === 'tasks://open');
       assert.ok(openTasksResource, 'tasks://open должен быть зарегистрирован');
       assert.equal(openTasksResource.name, 'tasks.open');
 
-      const { resourceTemplates } = await client.listResourceTemplates();
+      const { resourceTemplates } = await clientUser1.listResourceTemplates();
       const taskByIdTemplate = resourceTemplates.find(
         (template) => template.uriTemplate === 'task://{id}',
       );
       assert.ok(taskByIdTemplate, 'task://{id} должен быть зарегистрирован');
 
-      // 7. Список промптов: meeting_brief и meeting_task_review.
-      const { prompts } = await client.listPrompts();
+      // 8. Список промптов: meeting_brief и meeting_task_review.
+      const { prompts } = await clientUser1.listPrompts();
       assert.ok(
         prompts.find((prompt) => prompt.name === 'meeting_brief'),
         'meeting_brief есть',
@@ -174,15 +210,10 @@ test(
         'meeting_task_review есть',
       );
 
-      // 8. addTask: создание двух задач на встрече user-1.
-      const addResult = await client.callTool({
+      // 9. addTask: создание двух задач на встрече user-1.
+      const addResult = await clientUser1.callTool({
         name: 'addTask',
-        arguments: {
-          meeting_id: meeting.id,
-          user_id: user1.userId,
-          title: 'Prepare slides',
-          assignee: 'Alice',
-        },
+        arguments: { meeting_id: meeting.id, title: 'Prepare slides', assignee: 'Alice' },
       });
       assert.ok(!addResult.isError, 'создание задачи не должно давать ошибку');
       const createdTask = JSON.parse(addResult.content[0].text);
@@ -190,41 +221,55 @@ test(
       assert.equal(createdTask.meetingId, meeting.id);
       assert.equal(createdTask.status, 'open');
 
-      await client.callTool({
+      await clientUser1.callTool({
         name: 'addTask',
-        arguments: { meeting_id: meeting.id, user_id: user1.userId, title: 'Book room' },
+        arguments: { meeting_id: meeting.id, title: 'Book room' },
       });
 
-      // 9. findTask: своя встреча → все задачи встречи.
-      const ownedResult = await client.callTool({
+      // 10. findTask: своя встреча → все задачи встречи.
+      const ownedResult = await clientUser1.callTool({
         name: 'findTask',
-        arguments: { query: '', meeting_id: meeting.id, user_id: user1.userId },
+        arguments: { query: '', meeting_id: meeting.id },
       });
       assert.ok(!ownedResult.isError, 'своя встреча не должна давать ошибку');
       assert.deepEqual(taskTitles(ownedResult), ['Prepare slides', 'Book room']);
 
-      // 10. addTask: чужой пользователь → ошибка владельца.
-      const foreignAddResult = await client.callTool({
+      // 11. addTask: чужой пользователь (свой токен) → ошибка владельца.
+      const foreignAddResult = await clientUser2.callTool({
         name: 'addTask',
-        arguments: { meeting_id: meeting.id, user_id: user2.userId, title: 'Sneak' },
+        arguments: { meeting_id: meeting.id, title: 'Sneak' },
       });
       assert.equal(foreignAddResult.isError, true);
       assert.match(JSON.parse(foreignAddResult.content[0].text).error, /does not belong to user/);
 
-      // 11. Динамический ресурс: task://{id} возвращает задачу по id.
-      const byId = await client.readResource({ uri: `task://${createdTask.id}` });
+      // 12. Динамический ресурс: task://{id} возвращает задачу по id (своя встреча).
+      const byId = await clientUser1.readResource({ uri: `task://${createdTask.id}` });
       const singleTask = JSON.parse(byId.contents[0].text);
       assert.equal(singleTask.title, 'Prepare slides');
       assert.equal(singleTask.assignee, 'Alice');
 
-      // 12. Статический ресурс: tasks://open — обе созданные задачи открытые.
-      const openTasks = await client.readResource({ uri: 'tasks://open' });
+      // 13. Динамический ресурс: чужой пользователь не видит задачу (как «не найдена»).
+      await assert.rejects(
+        clientUser2.readResource({ uri: `task://${createdTask.id}` }),
+        /not found/,
+        'чужая задача должна читаться как «не найдена»',
+      );
+
+      // 14. Статический ресурс: tasks://open — только открытые задачи своих встреч.
+      const openTasks = await clientUser1.readResource({ uri: 'tasks://open' });
       const openTitles = taskTitlesFromResource(openTasks);
       assert.ok(openTitles.includes('Prepare slides'), 'открытые задачи включены');
       assert.ok(openTitles.includes('Book room'), 'новая открытая задача включена');
 
-      // 13. Промпт meeting_brief: структурированное сообщение с информацией встречи.
-      const brief = await client.getPrompt({
+      const openTasksUser2 = await clientUser2.readResource({ uri: 'tasks://open' });
+      assert.deepEqual(
+        taskTitlesFromResource(openTasksUser2),
+        [],
+        'у user-2 без своих встреч открытых задач нет',
+      );
+
+      // 15. Промпт meeting_brief: структурированное сообщение с информацией встречи.
+      const brief = await clientUser1.getPrompt({
         name: 'meeting_brief',
         arguments: { meeting_id: meeting.id },
       });
@@ -232,8 +277,15 @@ test(
       assert.match(briefText, /Meeting Brief: Planning/);
       assert.match(briefText, /Sprint planning/);
 
-      // 14. Промпт meeting_task_review: агрегированные задачи встречи.
-      const review = await client.getPrompt({
+      // 16. Промпт meeting_brief: чужая встреча — ошибка владельца.
+      await assert.rejects(
+        clientUser2.getPrompt({ name: 'meeting_brief', arguments: { meeting_id: meeting.id } }),
+        /does not belong to user/,
+        'чужой пользователь не получает бриф встречи',
+      );
+
+      // 17. Промпт meeting_task_review: агрегированные задачи встречи.
+      const review = await clientUser1.getPrompt({
         name: 'meeting_task_review',
         arguments: { meeting_id: meeting.id },
       });
@@ -242,25 +294,26 @@ test(
       assert.match(reviewText, /Prepare slides/);
       assert.match(reviewText, /Book room/);
 
-      // 15. findTask: чужой пользователь → ошибка владельца.
-      const foreignResult = await client.callTool({
+      // 18. findTask: чужой пользователь → ошибка владельца.
+      const foreignResult = await clientUser2.callTool({
         name: 'findTask',
-        arguments: { query: '', meeting_id: meeting.id, user_id: user2.userId },
+        arguments: { query: '', meeting_id: meeting.id },
       });
       assert.equal(foreignResult.isError, true);
       const foreignError = JSON.parse(foreignResult.content[0].text);
       assert.match(foreignError.error, /does not belong to user/);
 
-      // 16. Неизвестная встреча → ошибка.
-      const missingResult = await client.callTool({
+      // 19. Неизвестная встреча → ошибка.
+      const missingResult = await clientUser1.callTool({
         name: 'findTask',
-        arguments: { query: '', meeting_id: 'missing', user_id: user1.userId },
+        arguments: { query: '', meeting_id: 'missing' },
       });
       assert.equal(missingResult.isError, true);
       const missingError = JSON.parse(missingResult.content[0].text);
       assert.match(missingError.error, /not found/);
     } finally {
-      await client?.close();
+      await clientUser1?.close();
+      await clientUser2?.close();
       child.kill('SIGTERM');
       if (apiOutput.trim()) {
         t.diagnostic(`вывод API:\n${apiOutput.trim()}`);

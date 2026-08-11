@@ -11,14 +11,19 @@ import { z } from 'zod/v4';
 import { MeetingsRepository } from '../meetings/meetings.repository';
 import { Meeting } from '../meetings/meeting.entity';
 import { TasksService } from './tasks.service';
-import { MeetingOwner } from '../mcp/meeting-owner';
+import { MeetingNotFoundError, MeetingNotOwnedError, MeetingOwner } from '../mcp/meeting-owner';
 import type { McpToolRegister } from '../mcp/mcp-tool-register';
+import type { Requester } from '../mcp/requester';
 
 /**
  * Регистратор MCP-примитивов домена задач: инструменты `findTask`/`addTask`, ресурсы
  * `tasks://open` и `task://{id}`, промпты `meeting_brief` и `meeting_task_review`.
  * Реализует `McpToolRegister` и предоставляется провайдером с токеном `MCP_TOOL_REGISTER`
- * (`multi: true`) — McpService применяет его к MCP-серверу при каждом HTTP-запросе.
+ * — McpService применяет его к MCP-серверу при каждом HTTP-запросе.
+ *
+ * Аутентификация выполнена на HTTP-уровне (`McpAuthGuard`); сюда приходит `Requester` из
+ * токена, и каждый примитив авторизует доступ через владение встречей (`MeetingOwner`):
+ * `meeting_id` клиент задаёт, но принадлежность встречи проверяется по `requester.id`.
  * Весь доступ к данным задач идёт через единый сервисный слой `TasksService`.
  */
 @Injectable()
@@ -32,28 +37,32 @@ export class TaskTools implements McpToolRegister {
     this.meetingOwner = new MeetingOwner(meetingsRepository);
   }
 
-  /** Регистрирует все MCP-примитивы домена задач на переданном сервере. */
-  register(server: McpServer): void {
-    this.registerFindTaskTool(server);
-    this.registerAddTaskTool(server);
-    this.registerOpenTasksResource(server);
-    this.registerTaskByIdResource(server);
-    this.registerMeetingBriefPrompt(server);
-    this.registerMeetingTaskReviewPrompt(server);
+  /**
+   * Регистрирует все MCP-примитивы домена задач на переданном сервере. `requester`
+   * захватывается обработчиками в замыкании: McpService вызывает `register` на каждый
+   * HTTP-запрос со свежим сервером, поэтому у каждого запроса свой круг доступа.
+   */
+  register(server: McpServer, requester: Requester): void {
+    this.registerFindTaskTool(server, requester);
+    this.registerAddTaskTool(server, requester);
+    this.registerOpenTasksResource(server, requester);
+    this.registerTaskByIdResource(server, requester);
+    this.registerMeetingBriefPrompt(server, requester);
+    this.registerMeetingTaskReviewPrompt(server, requester);
   }
 
   private readonly findTaskSchema = z.object({
     query: z.string(),
     meeting_id: z.string(),
-    user_id: z.string(),
   });
 
   /**
    * Инструмент `findTask`: поиск задач встречи по текстовому `query` (регистронезависимая
    * подстрока по названию, пустой query — все задачи). Перед возвратом данных проверяет через
-   * `MeetingOwner`, что встреча принадлежит `user_id`. Только чтение — `readOnlyHint: true`.
+   * `MeetingOwner`, что встреча принадлежит `requester` (личность из JWT). Только чтение —
+   * `readOnlyHint: true`.
    */
-  private registerFindTaskTool(server: McpServer): void {
+  private registerFindTaskTool(server: McpServer, requester: Requester): void {
     server.registerTool(
       'findTask',
       {
@@ -69,7 +78,7 @@ export class TaskTools implements McpToolRegister {
       async (args) => {
         try {
           const params = this.findTaskSchema.parse(args);
-          await this.meetingOwner.findOwnedByUser(params.user_id, params.meeting_id);
+          await this.meetingOwner.findOwnedByUser(requester.id, params.meeting_id);
           const tasks = await this.tasksService.listForMeeting(params.meeting_id);
           const query = params.query.trim().toLowerCase();
           const matchingTasks =
@@ -84,7 +93,6 @@ export class TaskTools implements McpToolRegister {
 
   private readonly addTaskSchema = z.object({
     meeting_id: z.string(),
-    user_id: z.string(),
     title: z.string(),
     assignee: z.string().optional(),
     source: z.enum(['manual', 'insights']).optional(),
@@ -92,10 +100,10 @@ export class TaskTools implements McpToolRegister {
 
   /**
    * Инструмент `addTask`: создание задачи встречи через `TasksService.createTask`. Перед
-   * созданием проверяет через `MeetingOwner`, что встреча принадлежит `user_id`. Запись —
-   * `readOnlyHint: false`.
+   * созданием проверяет через `MeetingOwner`, что встреча принадлежит `requester` (личность
+   * из JWT). Запись — `readOnlyHint: false`.
    */
-  private registerAddTaskTool(server: McpServer): void {
+  private registerAddTaskTool(server: McpServer, requester: Requester): void {
     server.registerTool(
       'addTask',
       {
@@ -110,7 +118,7 @@ export class TaskTools implements McpToolRegister {
       async (args) => {
         try {
           const params = this.addTaskSchema.parse(args);
-          await this.meetingOwner.findOwnedByUser(params.user_id, params.meeting_id);
+          await this.meetingOwner.findOwnedByUser(requester.id, params.meeting_id);
           const task = await this.tasksService.createTask(
             params.meeting_id,
             params.title,
@@ -126,20 +134,20 @@ export class TaskTools implements McpToolRegister {
   }
 
   /**
-   * Статический ресурс `tasks://open`: список открытых задач всех встреч через
-   * `TasksService.listOpenTasks`. Авторизация не реализована — данные без ограничений.
+   * Статический ресурс `tasks://open`: список открытых задач **встреч запрашивающего** через
+   * `TasksService.listOpenTasksForOwner` — чужие встречи в результат не попадают.
    */
-  private registerOpenTasksResource(server: McpServer): void {
+  private registerOpenTasksResource(server: McpServer, requester: Requester): void {
     server.registerResource(
       'tasks.open',
       'tasks://open',
       {
         title: 'Open tasks',
-        description: 'List of open tasks across all meetings',
+        description: 'List of open tasks across the meetings owned by the current user',
         mimeType: 'application/json',
       },
       async (uri) => {
-        const tasks = await this.tasksService.listOpenTasks();
+        const tasks = await this.tasksService.listOpenTasksForOwner(requester.id);
         return { contents: textResourceContents(uri.toString(), tasks) };
       },
     );
@@ -147,26 +155,32 @@ export class TaskTools implements McpToolRegister {
 
   /**
    * Динамический ресурс `task://{id}`: данные конкретной задачи по её id через
-   * `TasksService.getTaskById`. Авторизация не реализована — задача доступна по любому id;
-   * несуществующий id даёт ошибку чтения ресурса (`InvalidParams`).
+   * `TasksService.getTaskById`. Доступ только к задачам встреч запрашивающего: несуществующая
+   * и недоступная (чужая) задача выглядят одинаково (`InvalidParams` + «not found»), чтобы
+   * не раскрывать существование чужих задач.
    */
-  private registerTaskByIdResource(server: McpServer): void {
+  private registerTaskByIdResource(server: McpServer, requester: Requester): void {
     server.registerResource(
       'task',
       new ResourceTemplate('task://{id}', { list: undefined }),
       {
         title: 'Task by id',
-        description: 'A single task of any meeting by its id',
+        description: 'A single task of a meeting owned by the current user, by its id',
         mimeType: 'application/json',
       },
       async (uri, variables) => {
         const taskId = Array.isArray(variables.id) ? variables.id[0] : variables.id;
         try {
           const task = await this.tasksService.getTaskById(taskId);
+          await this.meetingOwner.findOwnedByUser(requester.id, task.meetingId);
           return { contents: textResourceContents(uri.toString(), task) };
         } catch (error) {
-          if (error instanceof NotFoundException) {
-            throw new McpError(ErrorCode.InvalidParams, error.message);
+          if (
+            error instanceof NotFoundException ||
+            error instanceof MeetingNotFoundError ||
+            error instanceof MeetingNotOwnedError
+          ) {
+            throw new McpError(ErrorCode.InvalidParams, `Task with id ${taskId} not found`);
           }
           throw error;
         }
@@ -176,20 +190,32 @@ export class TaskTools implements McpToolRegister {
 
   private readonly meetingArgsSchema = z.object({ meeting_id: z.string() });
 
-  /** Единый путь для промптов: найти встречу по id, иначе — ошибка чтения промпта. */
-  private async findMeetingForPrompt(meetingId: string): Promise<Meeting> {
-    const meeting = await this.meetingsRepository.findById(meetingId);
-    if (!meeting) {
-      throw new McpError(ErrorCode.InvalidParams, `Meeting with id ${meetingId} not found`);
+  /**
+   * Единый путь для промптов: найти встречу по id и убедиться, что она принадлежит
+   * `requester`, иначе — ошибка чтения промпта (`InvalidParams`).
+   */
+  private async findOwnedMeetingForPrompt(
+    requester: Requester,
+    meetingId: string,
+  ): Promise<Meeting> {
+    try {
+      return await this.meetingOwner.findOwnedByUser(requester.id, meetingId);
+    } catch (error) {
+      if (error instanceof MeetingNotFoundError) {
+        throw new McpError(ErrorCode.InvalidParams, `Meeting with id ${meetingId} not found`);
+      }
+      if (error instanceof MeetingNotOwnedError) {
+        throw new McpError(ErrorCode.InvalidParams, error.message);
+      }
+      throw error;
     }
-    return meeting;
   }
 
   /**
    * Промпт `meeting_brief`: собирает информацию о встрече (название, описание, summary)
-   * и формирует готовый бриф для дальнейшей работы.
+   * и формирует готовый бриф для дальнейшей работы. Доступ — только к своим встречам.
    */
-  private registerMeetingBriefPrompt(server: McpServer): void {
+  private registerMeetingBriefPrompt(server: McpServer, requester: Requester): void {
     server.registerPrompt(
       'meeting_brief',
       {
@@ -198,7 +224,7 @@ export class TaskTools implements McpToolRegister {
         argsSchema: this.meetingArgsSchema.shape,
       },
       async (args) => {
-        const meeting = await this.findMeetingForPrompt(args.meeting_id);
+        const meeting = await this.findOwnedMeetingForPrompt(requester, args.meeting_id);
         const brief = [
           `Meeting Brief: ${meeting.name}`,
           `ID: ${meeting.id}`,
@@ -214,9 +240,10 @@ export class TaskTools implements McpToolRegister {
 
   /**
    * Промпт `meeting_task_review`: находит встречу, агрегирует связанные задачи через
-   * `TasksService.listForMeeting` и формирует готовый промпт для ревью задач.
+   * `TasksService.listForMeeting` и формирует готовый промпт для ревью задач. Доступ —
+   * только к своим встречам.
    */
-  private registerMeetingTaskReviewPrompt(server: McpServer): void {
+  private registerMeetingTaskReviewPrompt(server: McpServer, requester: Requester): void {
     server.registerPrompt(
       'meeting_task_review',
       {
@@ -225,7 +252,7 @@ export class TaskTools implements McpToolRegister {
         argsSchema: this.meetingArgsSchema.shape,
       },
       async (args) => {
-        const meeting = await this.findMeetingForPrompt(args.meeting_id);
+        const meeting = await this.findOwnedMeetingForPrompt(requester, args.meeting_id);
         const tasks = await this.tasksService.listForMeeting(meeting.id);
         const taskLines =
           tasks.length === 0

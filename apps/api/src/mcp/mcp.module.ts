@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { McpAuthGuard } from '../guards/mcp-auth.guard';
 import { MeetingsModule } from '../meetings/meetings.module';
 import { MeetingsRepository } from '../meetings/meetings.repository';
 import { TaskTools } from '../tasks/task-tools';
@@ -18,10 +19,12 @@ import {
  * Модуль MCP-слоя приложения. Две независимые части:
  *
  * 1. HTTP-endpoint `/mcp` (McpController + McpService): единый MCP-сервер поверх
- *    `StreamableHTTPServerTransport` (stateless + JSON-ответы). Инструменты/ресурсы/промпты
- *    собираются из регистраторов доменов. Доменный модуль предоставляет и экспортирует свой
- *    регистратор (например, `TaskTools` из `TasksModule`); McpModule — композиционный корень —
- *    инжектит их и собирает в массив под токеном `MCP_TOOL_REGISTER` (NestJS не поддерживает
+ *    `StreamableHTTPServerTransport` (stateless + JSON-ответы). Аутентификация —
+ *    `McpAuthGuard` (Bearer-JWT), авторизация — на уровне данных инструментов через
+ *    `Requester` из токена + `MeetingOwner`. Инструменты/ресурсы/промпты собираются из
+ *    регистраторов доменов. Доменный модуль предоставляет и экспортирует свой регистратор
+ *    (например, `TaskTools` из `TasksModule`); McpModule — композиционный корень — инжектит
+ *    их и собирает в массив под токеном `MCP_TOOL_REGISTER` (NestJS не поддерживает
  *    `multi: true`, поэтому массив строится `useFactory`). Новый домен = добавить его
  *    регистратор в `inject`/массив этой фабрики. McpService применяет массив к MCP-серверу
  *    при каждом HTTP-запросе.
@@ -36,6 +39,7 @@ import {
   controllers: [McpController],
   providers: [
     McpService,
+    McpAuthGuard,
     {
       provide: MCP_TOOL_REGISTER,
       inject: [TaskTools],

@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { Requester } from './requester';
 
 /**
  * Регистратор MCP-примитивов домена (инструменты, ресурсы, промпты). Домен инжектит свои
@@ -8,6 +9,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
  * получает массив всех регистраторов и вызывает `register()` при создании MCP-сервера.
  */
 export interface McpToolRegister {
-  /** Регистрирует инструменты/ресурсы/промпты домена на MCP-сервере. */
-  register(server: McpServer): void;
+  /**
+   * Регистрирует инструменты/ресурсы/промпты домена на MCP-сервере. `requester` —
+   * идентифицированный из Bearer-JWT пользователь запроса; обработчики захватывают его
+   * в замыкании и используют для авторизации на уровне данных (владелец встречи/задачи).
+   */
+  register(server: McpServer, requester: Requester): void;
 }
